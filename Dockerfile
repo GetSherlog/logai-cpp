@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     git cmake g++ make libssl-dev zlib1g-dev \
     libjsoncpp-dev uuid-dev libmariadb-dev wget curl \
+    libcurl4-openssl-dev \
     libboost-all-dev python3 ninja-build pkg-config unzip \
     python3-pip nlohmann-json3-dev libjemalloc-dev \
     libgoogle-glog-dev libgflags-dev liblz4-dev libleveldb-dev \
@@ -139,7 +140,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev zlib1g-dev libjsoncpp-dev uuid-dev \
     libmariadb-dev libboost-all-dev libjemalloc-dev \
     libgoogle-glog-dev libgflags-dev liblz4-dev \
-    libleveldb-dev libtbb-dev curl libhiredis-dev libspdlog-dev libfmt-dev \
+    libleveldb-dev libtbb-dev curl libcurl4-openssl-dev libhiredis-dev libspdlog-dev libfmt-dev \
     libdouble-conversion-dev liblzma-dev libzstd-dev libbz2-dev libsnappy-dev \
     libfmt-dev libspdlog-dev libsodium-dev libsodium23 libunwind8 libunwind-dev \
     && rm -rf /var/lib/apt/lists/*

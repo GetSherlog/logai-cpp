@@ -32,7 +32,7 @@
 #include <parquet/arrow/writer.h>
 #include <parquet/exception.h>
 #include "preprocessor.h"
-
+#include <spdlog/spdlog.h>
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -202,18 +202,17 @@ void FileDataLoader::worker_thread(ThreadSafeQueue<LogBatch>& input_queue,
             }
             
             if (batch.id % 10 == 0 || error_count > 0) {
-                std::cout << "Processed batch " << batch.id 
-                          << ": " << success_count << " successes, " 
-                          << error_count << " errors" << std::endl;
+                spdlog::info("Processed batch {}: {} successes, {} errors", 
+                            batch.id, success_count, error_count);
             }
             
             // Push the processed batch to the output queue
             output_queue.push(std::move(processed_batch));
         }
         
-        std::cout << "Worker thread finished" << std::endl;
+        spdlog::info("Worker thread finished");
     } catch (const std::exception& e) {
-        std::cerr << "Error in worker thread: " << e.what() << std::endl;
+        spdlog::error("Error in worker thread: {}", e.what());
     }
 }
 
@@ -293,11 +292,11 @@ void FileDataLoader::producer_thread(MemoryMappedFile& file, ThreadSafeQueue<Log
                         
                         // Report progress periodically
                         if (lines_processed % 10000 == 0) {
-                            std::cout << "Processed " << lines_processed << " lines" << std::endl;
+                            spdlog::info("Processed {} lines", lines_processed);
                         }
                     }
                 } catch (const std::exception& e) {
-                    std::cerr << "Error creating batch: " << e.what() << std::endl;
+                    spdlog::error("Error creating batch: {}", e.what());
                 }
             });
             
@@ -347,10 +346,10 @@ void FileDataLoader::producer_thread(MemoryMappedFile& file, ThreadSafeQueue<Log
                     
                     // Report progress periodically
                     if (lines_processed % 10000 == 0) {
-                        std::cout << "Processed " << lines_processed << " lines" << std::endl;
+                        spdlog::info("Processed {} lines", lines_processed);
                     }
                 } catch (const std::exception& e) {
-                    std::cerr << "Error creating batch: " << e.what() << std::endl;
+                    spdlog::error("Error creating batch: {}", e.what());
                 }
             });
             
@@ -362,7 +361,7 @@ void FileDataLoader::producer_thread(MemoryMappedFile& file, ThreadSafeQueue<Log
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error in producer thread: " << e.what() << std::endl;
+        spdlog::error("Error in producer thread: {}", e.what());
     }
     
     // Signal that no more batches will be produced
@@ -412,7 +411,7 @@ void FileDataLoader::read_file_memory_mapped(const std::string& file_path,
         const char* end = data + sb.st_size;
         const char* line_start = data;
 
-        std::cout << "Processing memory mapped file of size: " << sb.st_size << " bytes" << std::endl;
+        spdlog::info("Processing memory mapped file of size: {} bytes", sb.st_size);
 
         // Process each line
         size_t line_count = 0;
@@ -432,28 +431,28 @@ void FileDataLoader::read_file_memory_mapped(const std::string& file_path,
                     line_count++;
                     
                     if (line_count % 10000 == 0) {
-                        std::cout << "Processed " << line_count << " lines" << std::endl;
+                        spdlog::info("Processed {} lines", line_count);
                     }
                 } catch (const std::exception& e) {
-                    std::cerr << "Error processing line: " << e.what() << std::endl;
+                    spdlog::error("Error processing line: {}", e.what());
                 }
             } else if (line_length >= MAX_LINE_LENGTH) {
-                std::cerr << "Skipping line " << line_count << ": Line too long (" << line_length << " bytes)" << std::endl;
+                spdlog::error("Skipping line {} (length: {}): Line too long", line_count, line_length);
             }
 
             // Move to the next line
             line_start = (line_end < end) ? line_end + 1 : end;
         }
 
-        std::cout << "Finished processing " << line_count << " lines" << std::endl;
+        spdlog::info("Finished processing {} lines", line_count);
 
         // Unmap and close the file
         if (munmap(mapped, sb.st_size) == -1) {
-            std::cerr << "Warning: Failed to unmap file: " << file_path << ", error: " << strerror(errno) << std::endl;
+            spdlog::error("Warning: Failed to unmap file: {}", file_path);
         }
         close(fd);
     } catch (const std::exception& e) {
-        std::cerr << "Error in read_file_memory_mapped: " << e.what() << std::endl;
+        spdlog::error("Error in read_file_memory_mapped: {}", e.what());
         throw;
     }
 }
@@ -475,7 +474,7 @@ std::vector<LogRecordObject> FileDataLoader::read_logs(const std::string& filepa
         try {
             records.push_back(parser->parse_line(line));
         } catch (const std::exception& e) {
-            std::cerr << "Error parsing line: " << e.what() << std::endl;
+            spdlog::error("Error parsing line: {}", e.what());
         }
     }
     

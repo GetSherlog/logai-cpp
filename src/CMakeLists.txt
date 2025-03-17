@@ -25,6 +25,10 @@ find_package(absl REQUIRED)
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 
+# Find CURL package
+find_package(CURL REQUIRED)
+include_directories(${CURL_INCLUDE_DIRS})
+
 # Link with dependencies
 target_link_libraries(logai 
     PRIVATE nlohmann_json::nlohmann_json
@@ -32,6 +36,7 @@ target_link_libraries(logai
     PRIVATE PkgConfig::PARQUET
     PRIVATE absl::strings
     PRIVATE Eigen3::Eigen
+    PRIVATE ${CURL_LIBRARIES}
 )
 
 # Add performance test executable

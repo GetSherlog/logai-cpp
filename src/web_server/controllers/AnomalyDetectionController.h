@@ -11,6 +11,12 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include "FeatureExtractor.h"
+#include "LabelEncoder.h"
+#include "LogBERTVectorizer.h"
+#include "OneClassSVMDetector.h"
+#include "DbScanClustering.h"
+#include "DbScanClusteringKDTree.h"
 
 namespace logai {
 namespace web {
@@ -26,6 +32,7 @@ public:
     ADD_METHOD_TO(AnomalyDetectionController::vectorizeLogbert, "/api/features/logbert", drogon::Post);
     ADD_METHOD_TO(AnomalyDetectionController::detectAnomaliesOcSvm, "/api/anomalies/ocsvm", drogon::Post);
     ADD_METHOD_TO(AnomalyDetectionController::clusterDbscan, "/api/anomalies/dbscan", drogon::Post);
+    ADD_METHOD_TO(AnomalyDetectionController::detectAnomalies, "/api/anomalies/detect", drogon::Post);
     METHOD_LIST_END
 
     AnomalyDetectionController();
@@ -73,7 +80,18 @@ public:
     void clusterDbscan(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback);
 
+    // Unified anomaly detection endpoint
+    void detectAnomalies(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+
 private:
+    // Helper method to parse JSON requests
+    bool parseJsonBody(const drogon::HttpRequestPtr& req, nlohmann::json& jsonOut);
+    
+    // Helper methods to create responses
+    drogon::HttpResponsePtr createJsonResponse(const nlohmann::json& json);
+    drogon::HttpResponsePtr createErrorResponse(const std::string& message);
+
+    // Components
     std::unique_ptr<FeatureExtractor> featureExtractor_;
     std::unique_ptr<LabelEncoder> labelEncoder_;
     std::unique_ptr<LogBERTVectorizer> logbertVectorizer_;

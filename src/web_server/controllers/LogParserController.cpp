@@ -5,6 +5,12 @@
 #include "drain_parser.h"
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
+#include <regex>
+#include <arrow/array/builder_binary.h>
+#include <arrow/array/builder_primitive.h>
+#include <arrow/array/builder_string.h>
+#include <arrow/table.h>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -15,72 +21,20 @@ namespace web {
 LogParserController::LogParserController() {
     // Initialize DrainParser with default settings
     DataLoaderConfig config;
-    drainParser_ = std::make_unique<DrainParser>(config, 4, 0.5, 100);
+    drainParser_ = std::make_shared<DrainParser>(config, 4, 0.5, 100);
+    
+    // Initialize the TemplateManager with default path
+    templateManager_ = std::make_shared<TemplateManager>("./templates.json");
     
     // Load templates if they exist
-    if (fs::exists(template_store_path_)) {
+    if (fs::exists(templateManager_->get_template_store_path())) {
         try {
-            drainParser_->load_templates(template_store_path_);
-            spdlog::info("Loaded templates from {}", template_store_path_);
+            templateManager_->load_templates(templateStore_);
+            spdlog::info("Loaded templates from {}", templateManager_->get_template_store_path());
         } catch (const std::exception& e) {
             spdlog::error("Error loading templates: {}", e.what());
         }
     }
-}
-
-void LogParserController::parseDrain(
-    const drogon::HttpRequestPtr& req,
-    std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-    
-    // Parse request JSON
-    json requestJson;
-    if (!parseJsonBody(req, requestJson)) {
-        callback(createErrorResponse("Invalid JSON in request body"));
-        return;
-    }
-    
-    // Validate request
-    if (!requestJson.contains("logLines") || !requestJson["logLines"].is_array()) {
-        callback(createErrorResponse("Request must contain 'logLines' array"));
-        return;
-    }
-    
-    // Extract log lines
-    std::vector<std::string> logLines;
-    for (const auto& line : requestJson["logLines"]) {
-        if (line.is_string()) {
-            logLines.push_back(line.get<std::string>());
-        }
-    }
-    
-    if (logLines.empty()) {
-        callback(createErrorResponse("No valid log lines provided"));
-        return;
-    }
-    
-    // Parse the log lines
-    std::vector<LogRecordObject> parsedLogs;
-    for (const auto& line : logLines) {
-        parsedLogs.push_back(drainParser_->parse_line(line));
-    }
-    
-    // Prepare response
-    json response;
-    response["parsedLogs"] = json::array();
-    
-    for (const auto& log : parsedLogs) {
-        json logJson;
-        logJson["template"] = log.template_str;
-        logJson["attributes"] = log.attributes;
-        response["parsedLogs"].push_back(logJson);
-    }
-    
-    response["totalLogs"] = logLines.size();
-    
-    // Save templates after parsing
-    drainParser_->save_templates(template_store_path_);
-    
-    callback(createJsonResponse(response));
 }
 
 void LogParserController::parseFile(
@@ -100,7 +54,7 @@ void LogParserController::parseFile(
         return;
     }
     
-    std::string filePath = requestJson["filePath"].get<std::string>();
+    const std::string filePath = requestJson["filePath"].get<std::string>();
     
     // Check if file exists
     if (!fs::exists(filePath)) {
@@ -117,53 +71,56 @@ void LogParserController::parseFile(
     if (requestJson.contains("parserType") && requestJson["parserType"].is_string()) {
         parserType = requestJson["parserType"].get<std::string>();
     }
+    config.log_type = parserType;
     
     try {
-        // Load the file
+        // Load the file and parse logs
         FileDataLoader dataLoader(config);
+        std::vector<LogRecordObject> parsedLogs = dataLoader.load_data();
         
-        // Parse the file
-        std::vector<LogRecordObject> parsedLogs;
-        
-        if (parserType == "json") {
-            // JSON parser handling
-            JSONParser jsonParser;
-            parsedLogs = dataLoader.load_and_parse(jsonParser);
-        } else if (parserType == "csv") {
-            // CSV parser handling
-            CSVParser csvParser;
-            parsedLogs = dataLoader.load_and_parse(csvParser);
-        } else if (parserType == "regex") {
-            // Regex parser handling (if it exists)
-            RegexParser regexParser;
-            parsedLogs = dataLoader.load_and_parse(regexParser);
-        } else {
-            // Default to drain
-            parsedLogs = dataLoader.load_and_parse(*drainParser_);
+        // Process logs to extract and store templates
+        for (auto& log : parsedLogs) {
+            // Get template ID and add to template store if we have a template
+            if (!log.template_str.empty()) {
+                int templateId = drainParser_->get_cluster_id_for_log(log.body);
+                addTemplateToStore(templateId, log.template_str, log);
+            }
         }
         
         // Prepare response
         json response;
-        response["parsedLogs"] = json::array();
         
-        // Limit the response to a reasonable size
-        const size_t maxLogs = 1000;
-        const size_t logsToReturn = std::min(parsedLogs.size(), maxLogs);
+        // Group logs by template
+        std::map<std::string, std::vector<json>> templateGroups;
         
-        for (size_t i = 0; i < logsToReturn; ++i) {
-            const auto& log = parsedLogs[i];
-            json logJson;
-            logJson["template"] = log.template_str;
-            logJson["body"] = log.body;
-            logJson["attributes"] = log.attributes;
-            response["parsedLogs"].push_back(logJson);
+        for (const auto& log : parsedLogs) {
+            // Skip logs without templates
+            if (log.template_str.empty()) continue;
+            
+            // Create attribute entry for this log
+            json attributeEntry = log.attributes;
+            // Add the original log body for reference if needed
+            attributeEntry["_original"] = log.body;
+            
+            // Add to the template group
+            templateGroups[log.template_str].push_back(attributeEntry);
+        }
+        
+        // Convert the grouped data to the response format
+        response["templates"] = json::array();
+        for (const auto& [template_str, attributes] : templateGroups) {
+            json templateJson;
+            templateJson["template"] = template_str;
+            templateJson["attributes"] = attributes;
+            templateJson["count"] = attributes.size();
+            response["templates"].push_back(templateJson);
         }
         
         response["totalLogs"] = parsedLogs.size();
-        response["returnedLogs"] = logsToReturn;
+        response["totalTemplates"] = templateGroups.size();
         
-        // Save templates after parsing
-        drainParser_->save_templates(template_store_path_);
+        // Save templates after processing
+        templateManager_->save_templates(templateStore_);
         
         callback(createJsonResponse(response));
         
@@ -199,7 +156,7 @@ void LogParserController::searchTemplates(
     }
     
     // Search for similar templates
-    auto results = drainParser_->search_templates(query, top_k);
+    auto results = templateStore_.search(query, top_k);
     
     // Prepare response
     json response;
@@ -209,29 +166,42 @@ void LogParserController::searchTemplates(
         json result;
         result["templateId"] = template_id;
         result["similarity"] = similarity;
-        result["template"] = drainParser_->get_template_store().get_template(template_id);
+        
+        auto template_str = templateStore_.get_template(template_id);
+        if (template_str) {
+            result["template"] = *template_str;
+        } else {
+            result["template"] = nullptr;
+        }
         
         // Get a sample of logs for this template (limit to 5)
-        auto logs = drainParser_->get_logs_for_template(template_id);
+        auto logs_opt = templateStore_.get_logs(template_id);
         json logSamples = json::array();
         
-        const size_t max_samples = 5;
-        const size_t samples_to_return = std::min(logs.size(), max_samples);
-        
-        for (size_t i = 0; i < samples_to_return; ++i) {
-            logSamples.push_back(logs[i].body);
+        if (logs_opt) {
+            const auto& logs = *logs_opt;
+            const size_t max_samples = 5;
+            const size_t samples_to_return = std::min(logs.size(), max_samples);
+            
+            for (size_t i = 0; i < samples_to_return; ++i) {
+                logSamples.push_back(logs[i].body);
+            }
+            
+            result["totalLogs"] = logs.size();
+        } else {
+            result["totalLogs"] = 0;
         }
         
         result["logSamples"] = logSamples;
-        result["totalLogs"] = logs.size();
-        
         response["results"].push_back(result);
     }
     
     response["query"] = query;
-    response["totalResults"] = results.size();
-    
     callback(createJsonResponse(response));
+}
+
+void LogParserController::addTemplateToStore(int template_id, const std::string& template_str, const LogRecordObject& log) {
+    templateStore_.add_template(template_id, template_str, log);
 }
 
 } // namespace web

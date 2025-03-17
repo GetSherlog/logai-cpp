@@ -2,13 +2,13 @@
 
 #include "log_parser.h"
 #include "data_loader_config.h"
-#include "template_store.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <memory>
 #include <regex>
 #include <unordered_set>
+#include <optional>
 
 namespace logai {
 
@@ -76,7 +76,7 @@ public:
      * Parse a log line using the DRAIN algorithm
      * 
      * @param line The log line to parse
-     * @return A LogRecordObject containing the parsed log
+     * @return A LogRecordObject containing the parsed log with template information
      */
     LogRecordObject parse_line(std::string_view line) override;
 
@@ -92,55 +92,44 @@ public:
      * 
      * @param threshold The similarity threshold (default: 0.5)
      */
-    void setSimilarityThreshold(double threshold);
+    void setSimilarityThreshold(const double threshold);
     
     /**
-     * Search for log templates similar to a query
+     * Set custom regex patterns for log preprocessing
      * 
-     * @param query The query string to search for
-     * @param top_k The number of results to return (default: 10)
-     * @return A vector of pairs containing template IDs and their similarity scores
+     * @param pattern_strings Vector of regex pattern strings to use for preprocessing
      */
-    std::vector<std::pair<int, float>> search_templates(const std::string& query, int top_k = 10);
+    void set_preprocess_patterns(const std::vector<std::string>& pattern_strings);
+
+    std::optional<std::string> get_template_for_cluster_id(const int cluster_id) const;
     
     /**
-     * Get logs for a specific template
+     * Get the cluster ID for a log line
      * 
-     * @param template_id The template ID to get logs for
-     * @return A vector of LogRecordObjects for the specified template
+     * @param line The log line
+     * @return The cluster/template ID for the log line
      */
-    std::vector<LogRecordObject> get_logs_for_template(int template_id);
+    int get_cluster_id_for_log(std::string_view line) const;
+
+    /**
+     * Get all templates with their cluster IDs
+     * 
+     * @return A map of cluster IDs to their templates
+     */
+    folly::F14FastMap<int, std::string> get_all_templates() const;
     
     /**
-     * Save the template store to a file
+     * Get the cluster ID from a LogRecordObject
      * 
-     * @param path The path to save to
-     * @return true if successful, false otherwise
+     * @param record The LogRecordObject to get the cluster ID from
+     * @return An optional containing the cluster ID if it exists
      */
-    bool save_templates(const std::string& path);
-    
-    /**
-     * Load templates from a file
-     * 
-     * @param path The path to load from
-     * @return true if successful, false otherwise
-     */
-    bool load_templates(const std::string& path);
-    
-    /**
-     * Get the template store
-     * 
-     * @return A reference to the template store
-     */
-    const TemplateStore& get_template_store() const;
+    std::optional<int> get_cluster_id_from_record(const LogRecordObject& record) const;
 
 private:
     // Use PIMPL idiom to hide implementation details
     std::unique_ptr<DrainParserImpl> impl_;
     const DataLoaderConfig& config_;
-    
-    // Template store for storing and searching templates
-    TemplateStore template_store_;
 };
 
 } // namespace logai 
