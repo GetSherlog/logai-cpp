@@ -1,172 +1,105 @@
-# LogAI - AI-Powered Log Analysis Tool
+# LogAI-CPP: High-Performance Log Analysis Engine with AI
 
-A powerful command-line tool for analyzing logs using AI, semantic search, and local LLM inference.
+LogAI-CPP is a high-performance log analysis library written in C++ with Python bindings, integrating AI capabilities for advanced log analysis, visualization, and insights.
 
 ## Features
 
-- Semantic search across log files with template extraction
-- Pattern analysis with AI-powered insights
-- Anomaly detection using machine learning algorithms
-- DuckDB integration for structured data queries
-- Vector embeddings for efficient similarity search
-- Local LLM inference with llama.cpp integration
-- High-performance processing with Folly data structures
+- **High-Performance C++ Core**: Efficiently process and analyze large log files using optimized C++ code
+- **Python Integration**: Seamless Python bindings that provide the best of both worlds
+- **AI-Powered Analysis**: Intelligent log analysis using LLMs (OpenAI GPT-4o by default)
+- **Data Visualization**: Generate insightful visualizations from log data
+- **Clustering**: Group similar logs using DBSCAN clustering
+- **Template Extraction**: Extract log templates using the DRAIN algorithm
+- **SQL Queries**: Run SQL queries against log data using DuckDB integration
+- **Vector Search**: Find similar log patterns using vector search techniques
+- **Time Analysis**: Analyze logs over time ranges and detect trends
+- **Anomaly Detection**: Identify unusual patterns and outliers in logs
 
-## Dependencies
+## Quick Start
 
-The following dependencies are required:
+### Building LogAI-CPP
 
-- C++17 or later
-- CMake 3.15 or later
-- cxxopts (for CLI argument parsing)
-- Eigen3 (for linear algebra operations)
-- abseil-cpp (for string utilities)
-- nlohmann-json (for JSON processing)
-- Apache Arrow (for efficient data handling)
-- libcurl (for HTTP requests)
-- Folly (for high-performance data structures)
-- DuckDB (for structured data queries)
-- llama.cpp (for local LLM inference)
-
-### Installing Dependencies
-
-On macOS (using Homebrew):
-```bash
-brew install cmake eigen abseil nlohmann-json apache-arrow curl folly duckdb
-```
-
-On Ubuntu/Debian:
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-    build-essential \
-    cmake \
-    libeigen3-dev \
-    libabsl-dev \
-    nlohmann-json3-dev \
-    libarrow-dev \
-    libcurl4-openssl-dev \
-    libcxxopts-dev \
-    libfolly-dev
-```
-
-## Building
-
-### Basic Build
-
-For a simple build on your current platform:
+We provide a Docker-based build script that compiles the C++ extension for your target platform:
 
 ```bash
-mkdir build
-cd build
-cmake ..
-make
+# Make the build script executable
+chmod +x build_and_run.sh
+
+# Run the build script
+./build_and_run.sh
 ```
 
-### Cross-Platform Build System
+Follow the prompts to select your target platform. The script will build the C++ extension in Docker and provide instructions for running the LogAI agent.
 
-LogAI includes a modular build system that can create binaries for multiple platforms:
+### Using the LogAI Agent CLI
 
-- Linux x86_64
-- Linux ARM64
-- macOS ARM64 (Apple Silicon)
+1. Set your OpenAI API key:
+   ```bash
+   export OPENAI_API_KEY=your_api_key_here
+   ```
 
-#### Requirements for Cross-Platform Building
+2. Run the CLI with a log file:
+   ```bash
+   python python/logai_agent_cli.py --log-file path/to/your/logfile.log
+   ```
 
-- Docker (for Linux builds)
-- macOS with Apple Silicon (for macOS ARM64 builds)
-- Homebrew (for macOS dependency installation)
+3. Use the interactive CLI to ask questions about your log data:
+   - "Show me all error logs from the last 24 hours"
+   - "Find patterns of failed connection attempts"
+   - "Visualize the distribution of log levels"
+   - "Cluster logs by response time and analyze outliers"
 
-#### Building for All Platforms
+## Example Scripts
 
-To build for all supported platforms that your environment can handle:
+We provide several example scripts to demonstrate LogAI's capabilities:
 
 ```bash
-./build_scripts/build_all.sh
+# Basic examples
+python python/examples/connection_drops.py
+python python/examples/performance_patterns.py
+python python/examples/interactive_query.py
+
+# Advanced features
+python python/examples/advanced_features.py
+python python/examples/log_clustering.py
+python python/examples/visualization_example.py
 ```
 
-This will:
-1. Detect your current platform
-2. Build native binaries for your platform
-3. Use Docker to build binaries for Linux platforms (if Docker is available)
-4. Create a combined package with all built binaries
+## Log Analysis and Visualization
 
-#### Platform-Specific Builds
+LogAI can generate powerful visualizations from log data:
 
-To build only for a specific platform:
+1. **Log Level Distribution**:
+   - Bar charts showing distribution of log levels
+   - Percentage of ERROR vs other log levels
 
-- **Linux ARM64**: `docker build -f build_scripts/Dockerfile.linux-arm64 -t logai-linux-arm64 .`
-- **Linux x86_64**: `docker build -f build_scripts/Dockerfile.linux-x86_64 -t logai-linux-x86_64 .`
-- **macOS ARM64**: `./build_scripts/build_macos_arm64.sh` (must run on Apple Silicon Mac)
+2. **Time Trend Analysis**:
+   - Line charts showing log activity over time
+   - Identification of peak activity periods
 
-#### Build Output
+3. **Clustering Analysis**:
+   - Grouping similar logs using DBSCAN
+   - Visualizing cluster sizes and characteristics
 
-The build system produces:
-- Platform-specific binaries in `bin/<platform>-<arch>/`
-- Required libraries in `lib/<platform>-<arch>/`
-- Deployment scripts for each platform
-- A combined package `logai-release.tar.gz` with all builds
+4. **Performance Analysis**:
+   - Response time distributions and outliers
+   - Correlation between log levels and performance metrics
 
-## Usage
+## Architecture
 
-The tool provides several commands for log analysis:
+LogAI combines:
 
-1. Parse a log file and extract templates:
-```bash
-./logai --parse path/to/logfile.log
-```
+1. **C++ Core**: High-performance log parsing, template extraction, and analytics
+2. **Python Bindings**: Seamless integration with Python ecosystem
+3. **AI Agent**: LLM-powered assistant for intelligent log analysis
+4. **Visualization Engine**: Data visualization capabilities using matplotlib and seaborn
 
-2. Search logs semantically:
-```bash
-./logai --search "error occurred during database connection"
-```
+## Requirements
 
-3. Analyze patterns in logs:
-```bash
-./logai --analyze path/to/logfile.log
-```
-
-4. Detect anomalies:
-```bash
-./logai --detect path/to/logfile.log
-```
-
-For more information about available options:
-```bash
-./logai --help
-```
-
-## Deployment
-
-The build system creates deployment scripts for each platform. After extracting the `logai-release.tar.gz` archive:
-
-1. **Automatic deployment**: Run `./deploy.sh` to automatically detect your platform and deploy
-2. **Manual platform deployment**:
-   - Linux ARM64: `./deploy_linux_arm64.sh`
-   - Linux x86_64: `./deploy_linux_x86_64.sh`
-   - macOS ARM64: `./deploy_macos_arm64.sh`
-
-The deployment scripts:
-1. Copy needed libraries to `~/.local/lib/`
-2. Make the binary executable
-3. Provide instructions for running the tool
-
-## Running in Docker
-
-A Docker image is available for easy deployment:
-
-```bash
-# Build the Docker image
-docker-compose build
-
-# Run the container
-docker-compose up -d
-
-# Use the CLI tool inside the container
-docker exec -it logai-web bash
-logai --help
-```
+- Python 3.8+
+- Docker (for building the C++ extension)
+- OpenAI API key (for AI-powered analysis)
 
 ## License
 
-MIT License 
+This project is licensed under the MIT License - see the LICENSE file for details. 
