@@ -1,6 +1,5 @@
 #include "llm_interface.h"
 #include "openai_provider.h"
-#include "llama_provider.h"
 #include <spdlog/spdlog.h>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -30,8 +29,17 @@ bool LLMInterface::init(ProviderType type, const std::string& config) {
             case ProviderType::OPENAI:
                 new_provider = std::make_unique<OpenAIProvider>();
                 break;
-            case ProviderType::LLAMA:
-                new_provider = std::make_unique<LlamaProvider>();
+            case ProviderType::OLLAMA:
+                // Reuse OpenAI provider with different configuration
+                new_provider = std::make_unique<OpenAIProvider>();
+                break;
+            case ProviderType::GEMINI:
+                // Reuse OpenAI provider with different configuration
+                new_provider = std::make_unique<OpenAIProvider>();
+                break;
+            case ProviderType::CUSTOM_API:
+                // Reuse OpenAI provider with custom configuration
+                new_provider = std::make_unique<OpenAIProvider>();
                 break;
             default:
                 spdlog::error("Unknown provider type");

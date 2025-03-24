@@ -13,7 +13,9 @@ class LLMInterface {
 public:
     enum class ProviderType {
         OPENAI,
-        LLAMA
+        OLLAMA,
+        GEMINI,
+        CUSTOM_API
     };
 
     LLMInterface();

@@ -15,6 +15,49 @@ LogAI-CPP is a high-performance log analysis library written in C++ with Python 
 - **Time Analysis**: Analyze logs over time ranges and detect trends
 - **Anomaly Detection**: Identify unusual patterns and outliers in logs
 
+## LLM Integration
+
+LogAI-CPP supports multiple LLM providers for AI-powered log analysis:
+
+- **OpenAI**: Use GPT models via OpenAI's API
+- **Ollama**: Run open-source models locally via Ollama
+- **Google Gemini**: Connect to Google's Gemini API
+- **Custom API**: Connect to any compatible LLM API
+
+To configure the LLM provider, set the appropriate environment variables:
+
+```bash
+# OpenAI Configuration
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY=your_api_key_here
+export OPENAI_MODEL=gpt-4o
+
+# OR Ollama Configuration
+export LLM_PROVIDER=ollama
+export OLLAMA_ENDPOINT=http://localhost:11434/api/generate
+export OLLAMA_MODEL=llama3
+
+# OR Google Gemini Configuration
+export LLM_PROVIDER=gemini
+export GEMINI_API_KEY=your_api_key_here
+export GEMINI_MODEL=gemini-pro
+```
+
+You can also configure the LLM provider in your Python code:
+
+```python
+from logai import LogAI
+
+# Initialize with OpenAI
+logai = LogAI(llm_provider="openai", api_key="your_openai_key")
+
+# Initialize with Ollama
+logai = LogAI(llm_provider="ollama", api_endpoint="http://localhost:11434/api/generate", model="llama3")
+
+# Initialize with Gemini
+logai = LogAI(llm_provider="gemini", api_key="your_gemini_key", model="gemini-pro")
+```
+
 ## Quick Start
 
 ### Building LogAI-CPP

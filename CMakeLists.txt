@@ -40,7 +40,6 @@ find_package(spdlog REQUIRED)
 find_package(Arrow REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Folly REQUIRED)
-find_package(llama REQUIRED)
 find_package(Boost REQUIRED COMPONENTS iostreams)
 find_package(ZLIB REQUIRED)
 find_package(BZip2 REQUIRED)
@@ -65,7 +64,6 @@ set(SOURCES
     src/duckdb_store.cpp
     src/llm_interface.cpp
     src/openai_provider.cpp
-    src/llama_provider.cpp
 )
 
 # Add header files
@@ -81,7 +79,6 @@ set(HEADERS
     src/llm_interface.h
     src/llm_provider.h
     src/openai_provider.h
-    src/llama_provider.h
 )
 
 # Create executable
@@ -110,7 +107,6 @@ target_link_libraries(logai PRIVATE
     Arrow::arrow
     Eigen3::Eigen
     Folly::folly
-    llama::llama
     ${Boost_LIBRARIES}
     ZLIB::ZLIB
     BZip2::BZip2

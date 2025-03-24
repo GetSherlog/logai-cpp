@@ -7,17 +7,17 @@
 
 namespace logai {
 
-class OpenAIProvider : public LLMProvider {
+class ExternalAPIProvider : public LLMProvider {
 public:
-    enum class APIFormat {
+    enum class APIType {
         OPENAI,
-        OLLAMA,
         GEMINI,
+        OLLAMA,
         CUSTOM
     };
 
-    OpenAIProvider();
-    ~OpenAIProvider() override;
+    ExternalAPIProvider();
+    ~ExternalAPIProvider() override;
 
     bool init(const std::string& config) override;
     std::optional<std::string> generate(
@@ -27,10 +27,11 @@ public:
 
 private:
     struct Config {
-        APIFormat api_format;
+        APIType api_type;
         std::string api_key;
         std::string model;
         std::string endpoint;
+        std::string request_format;
         std::string response_field_path;
         int timeout_ms;
     };
@@ -45,11 +46,11 @@ private:
     std::string build_request(const std::string& prompt, const std::string& system_prompt);
     std::string generate_cache_key(const std::string& prompt, const std::string& system_prompt);
     std::string extract_response(const std::string& json_response);
-    
+
     // API-specific request builders
     std::string build_openai_request(const std::string& prompt, const std::string& system_prompt);
-    std::string build_ollama_request(const std::string& prompt, const std::string& system_prompt);
     std::string build_gemini_request(const std::string& prompt, const std::string& system_prompt);
+    std::string build_ollama_request(const std::string& prompt, const std::string& system_prompt);
     std::string build_custom_request(const std::string& prompt, const std::string& system_prompt);
 };
 
