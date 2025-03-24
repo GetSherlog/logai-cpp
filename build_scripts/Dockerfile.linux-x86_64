@@ -1,4 +1,4 @@
-FROM ubuntu:22.04 AS dependencies
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
@@ -56,7 +56,7 @@ RUN git clone https://github.com/fastfloat/fast_float.git \
     && cmake .. \
     && make install
 
-# Install gflags from source (ensuring shared libraries are built)
+# Install gflags from source
 WORKDIR /tmp/gflags
 RUN git clone https://github.com/gflags/gflags.git \
     && cd gflags \
@@ -69,11 +69,7 @@ RUN git clone https://github.com/gflags/gflags.git \
             -DINSTALL_STATIC_LIBS=ON .. \
     && make -j$(nproc) \
     && make install \
-    && ldconfig \
-    # Create symlink for libgflags_shared if needed
-    && if [ -f /usr/local/lib/libgflags.so ] && [ ! -f /usr/local/lib/libgflags_shared.so ]; then \
-           ln -s /usr/local/lib/libgflags.so /usr/local/lib/libgflags_shared.so; \
-       fi
+    && ldconfig
 
 # Install Folly
 WORKDIR /tmp/folly
@@ -84,8 +80,6 @@ RUN apt-get update && apt-get install -y \
     libdouble-conversion-dev liblz4-dev \
     liblzma-dev libzstd-dev libbz2-dev libsnappy-dev \
     python3-pip python3-dev zlib1g-dev zstd pkg-config \
-    libfmt-dev libunwind-dev libicu-dev \
-    # Additional dependencies commonly needed
     libfmt-dev libunwind-dev libicu-dev \
     && rm -rf /var/lib/apt/lists/* \
     && git clone https://github.com/facebook/folly && cd folly/build \
@@ -124,8 +118,6 @@ RUN git clone https://github.com/duckdb/duckdb.git \
     && ldconfig
 
 # Build stage
-FROM dependencies AS build
-
 WORKDIR /app
 COPY . .
 
@@ -135,47 +127,22 @@ RUN mkdir -p build && cd build \
     && make -j$(nproc) \
     && make install
 
-# Final stage
-FROM ubuntu:22.04
+# Create output directory
+RUN mkdir -p /output/bin/linux-x86_64 \
+    && cp /app/build/bin/linux-x86_64/logai /output/bin/linux-x86_64/ \
+    && mkdir -p /output/lib/linux-x86_64 \
+    && cp -P /usr/local/lib/lib*.so* /output/lib/linux-x86_64/ \
+    && cp -P /usr/lib/x86_64-linux-gnu/lib*.so* /output/lib/linux-x86_64/ 2>/dev/null || true
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libssl-dev zlib1g-dev libjsoncpp-dev uuid-dev \
-    libmariadb-dev libboost-all-dev libjemalloc-dev \
-    libgoogle-glog-dev libgflags-dev liblz4-dev \
-    libleveldb-dev libtbb-dev curl libcurl4-openssl-dev libhiredis-dev libspdlog-dev libfmt-dev \
-    libdouble-conversion-dev liblzma-dev libzstd-dev libbz2-dev libsnappy-dev \
-    libfmt-dev libspdlog-dev libsodium-dev libsodium23 libunwind8 libunwind-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Create a deploy script for the binary
+RUN echo '#!/bin/bash\n\
+mkdir -p ~/.local/lib\n\
+cp ./lib/linux-x86_64/*.so* ~/.local/lib/\n\
+echo "Libraries copied to ~/.local/lib/"\n\
+echo "You may need to run: sudo ldconfig"\n\
+chmod +x ./bin/linux-x86_64/logai\n\
+echo "You can now run the binary with: ./bin/linux-x86_64/logai"' > /output/deploy-x86_64.sh \
+    && chmod +x /output/deploy-x86_64.sh
 
-# Copy all the libraries from the build stage
-COPY --from=build /usr/local/lib/* /usr/local/lib/
-COPY --from=build /usr/local/include /usr/local/include
-
-# Update the dynamic linker run-time bindings
-RUN ldconfig
-
-# Create necessary directories
-RUN mkdir -p /var/log/logai /var/uploads/logai \
-    && chmod -R 777 /var/log/logai \
-    && chmod -R 777 /var/uploads/logai
-
-# Copy built artifacts
-COPY --from=build /app/build/bin/logai /usr/local/bin/
-
-# Set permissions
-RUN chmod +x /usr/local/bin/logai
-
-# Set up environment variables
-ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:$LD_LIBRARY_PATH
-
-# Create working directory
-WORKDIR /app
-COPY --from=build /app/build /app/build
-RUN mkdir -p /app/uploads /app/logs
-
-# Startup script
-RUN echo '#!/bin/bash\necho "LogAI CLI is available."\necho "Run: logai --help for usage information."\nexec /bin/bash\n' > /start.sh && chmod +x /start.sh
-
-# Use a shell script
-CMD ["/start.sh"] 
+FROM scratch
+COPY --from=builder /output /output 

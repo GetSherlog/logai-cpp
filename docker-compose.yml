@@ -21,22 +21,6 @@ services:
     networks:
       - logai-network
 
-  logai-nextjs-ui:
-    build:
-      context: ./logai-next-ui
-      dockerfile: Dockerfile
-    container_name: logai-nextjs-ui
-    ports:
-      - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8080
-    depends_on:
-      logai-web:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - logai-network
-
 networks:
   logai-network:
     driver: bridge 

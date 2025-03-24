@@ -29,6 +29,9 @@ include_directories(${EIGEN3_INCLUDE_DIR})
 find_package(CURL REQUIRED)
 include_directories(${CURL_INCLUDE_DIRS})
 
+# Find cxxopts package
+find_package(cxxopts REQUIRED)
+
 # Link with dependencies
 target_link_libraries(logai 
     PRIVATE nlohmann_json::nlohmann_json
@@ -177,6 +180,19 @@ target_link_libraries(one_class_svm_test
     PRIVATE Eigen3::Eigen
 )
 
+# Add CLI executable
+add_executable(logai_cli logai.cpp)
+target_link_libraries(logai_cli 
+    PRIVATE logai
+    PRIVATE nlohmann_json::nlohmann_json
+    PRIVATE PkgConfig::ARROW
+    PRIVATE PkgConfig::PARQUET
+    PRIVATE absl::strings
+    PRIVATE Eigen3::Eigen
+    PRIVATE ${CURL_LIBRARIES}
+    PRIVATE cxxopts::cxxopts
+)
+
 # Enable SIMD optimizations
 # Add compiler-specific flags for SIMD
 if(NOT DEFINED DISABLE_SIMD OR NOT DISABLE_SIMD)
@@ -243,7 +259,7 @@ if(HAVE_NEON_SIMD_TEST)
     # Install executables that were successfully built
     foreach(target perf_test large_perf_test preprocessor_test simd_test neon_simd_test 
                   feature_extractor_test logbert_test logbert_unit_test dbscan_test 
-                  dbscan_kdtree_test label_encoder_test one_class_svm_test)
+                  dbscan_kdtree_test label_encoder_test one_class_svm_test logai_cli)
         if(TARGET ${target})
             install(TARGETS ${target}
                     RUNTIME DESTINATION bin)
@@ -259,7 +275,7 @@ else()
     # Install executables that were successfully built
     foreach(target perf_test large_perf_test preprocessor_test simd_test
                   feature_extractor_test logbert_test logbert_unit_test dbscan_test 
-                  dbscan_kdtree_test label_encoder_test one_class_svm_test)
+                  dbscan_kdtree_test label_encoder_test one_class_svm_test logai_cli)
         if(TARGET ${target})
             install(TARGETS ${target}
                     RUNTIME DESTINATION bin)

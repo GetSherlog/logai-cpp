@@ -1,84 +1,140 @@
 cmake_minimum_required(VERSION 3.10)
-project(logai-cpp VERSION 0.1.0)
+project(logai)
 
-# Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Generate compile_commands.json for IDE integration
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# Set compiler flags for optimization
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O3 -march=native")
-elseif(MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /O2 /arch:AVX2")
+# Set platform-specific options
+if(APPLE)
+    set(PLATFORM_NAME "macos")
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+        set(PLATFORM_ARCH "arm64")
+        set(PLATFORM_OPTIMIZATION "-mcpu=apple-m1")
+    else()
+        set(PLATFORM_ARCH "x86_64")
+        set(PLATFORM_OPTIMIZATION "-march=native")
+    endif()
+elseif(UNIX)
+    set(PLATFORM_NAME "linux")
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+        set(PLATFORM_ARCH "arm64")
+        set(PLATFORM_OPTIMIZATION "-march=armv8-a")
+    else()
+        set(PLATFORM_ARCH "x86_64")
+        set(PLATFORM_OPTIMIZATION "-march=native")
+    endif()
 endif()
 
-# Find dependencies
-# Find Abseil
-find_package(absl CONFIG REQUIRED)
+# Output information about the build
+message(STATUS "Building for platform: ${PLATFORM_NAME}-${PLATFORM_ARCH}")
+message(STATUS "Using optimization flags: ${PLATFORM_OPTIMIZATION}")
 
-# Find Eigen
-find_package(Eigen3 3.4 REQUIRED NO_MODULE)
-message(STATUS "Found Eigen3: ${EIGEN3_VERSION}")
+# Option for static linking
+option(BUILD_STATIC "Build with static linking" OFF)
 
-# JSON library
-find_package(nlohmann_json QUIET)
-if(NOT nlohmann_json_FOUND)
-    # If not found, use FetchContent as fallback
-    include(FetchContent)
-    FetchContent_Declare(
-        json
-        URL https://github.com/nlohmann/json/releases/download/v3.11.2/json.tar.xz
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(json)
+# Find required packages
+find_package(CURL REQUIRED)
+find_package(DuckDB REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(spdlog REQUIRED)
+find_package(Arrow REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(Folly REQUIRED)
+find_package(llama REQUIRED)
+
+# Add source files
+set(SOURCES
+    src/logai.cpp
+    src/drain_parser.cpp
+    src/gemini_vectorizer.cpp
+    src/template_store.cpp
+    src/feature_extractor.cpp
+    src/file_data_loader.cpp
+    src/dbscan_clustering_kdtree.cpp
+    src/one_class_svm.cpp
+    src/duckdb_store.cpp
+    src/llm_interface.cpp
+    src/openai_provider.cpp
+    src/llama_provider.cpp
+)
+
+# Add header files
+set(HEADERS
+    src/drain_parser.h
+    src/gemini_vectorizer.h
+    src/template_store.h
+    src/feature_extractor.h
+    src/file_data_loader.h
+    src/dbscan_clustering_kdtree.h
+    src/one_class_svm.h
+    src/duckdb_store.h
+    src/llm_interface.h
+    src/llm_provider.h
+    src/openai_provider.h
+    src/llama_provider.h
+)
+
+# Create executable
+add_executable(logai ${SOURCES} ${HEADERS})
+
+# Configure static linking if requested
+if(BUILD_STATIC)
+    message(STATUS "Building with static linking")
+    set_target_properties(logai PROPERTIES LINK_FLAGS "-static")
 endif()
 
-# Find Arrow and Parquet using pkg-config
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(ARROW REQUIRED IMPORTED_TARGET arrow)
-pkg_check_modules(PARQUET REQUIRED IMPORTED_TARGET parquet)
-message(STATUS "Found Arrow: ${ARROW_VERSION}")
-message(STATUS "Found Parquet: ${PARQUET_VERSION}")
+# Set output directory based on platform
+set(OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/${PLATFORM_NAME}-${PLATFORM_ARCH}")
+set_target_properties(logai PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${OUTPUT_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${OUTPUT_DIR}"
+)
 
-# Find Drogon package for the web server
-find_package(Drogon QUIET)
-if(NOT Drogon_FOUND)
-    message(STATUS "Drogon not found. Will attempt to fetch and build it.")
-    include(FetchContent)
-    FetchContent_Declare(
-        drogon
-        GIT_REPOSITORY https://github.com/drogonframework/drogon.git
-        GIT_TAG v1.9.10
-    )
-    FetchContent_MakeAvailable(drogon)
-endif()
+# Link libraries
+target_link_libraries(logai PRIVATE
+    CURL::libcurl
+    DuckDB::duckdb
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Arrow::arrow
+    Eigen3::Eigen
+    Folly::folly
+    llama::llama
+)
 
-# Add src subdirectory
-add_subdirectory(src)
+# Include directories
+target_include_directories(logai PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
-# Add web_server subdirectory if Drogon is available
-if(Drogon_FOUND OR TARGET Drogon::Drogon)
-    add_subdirectory(src/web_server)
+# Add compiler warnings and optimizations
+if(MSVC)
+    target_compile_options(logai PRIVATE /W4)
 else()
-    message(WARNING "Drogon not available. Web server will not be built.")
+    target_compile_options(logai PRIVATE -Wall -Wextra -Wpedantic ${PLATFORM_OPTIMIZATION})
 endif()
 
-# Package configuration
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/logai-cpp-config-version.cmake"
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
+# Installation rules
+install(TARGETS logai
+    RUNTIME DESTINATION bin
 )
 
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/logai-cpp-config-version.cmake"
-    DESTINATION lib/cmake/logai-cpp
-)
+# Set rpath for macOS
+if(APPLE)
+    set_target_properties(logai PROPERTIES
+        INSTALL_RPATH "@executable_path/../lib"
+        BUILD_WITH_INSTALL_RPATH TRUE
+    )
+endif()
+
+# Print configuration summary
+message(STATUS "Configuration Summary:")
+message(STATUS "  Platform:          ${PLATFORM_NAME}-${PLATFORM_ARCH}")
+message(STATUS "  Optimization:      ${PLATFORM_OPTIMIZATION}")
+message(STATUS "  Static linking:    ${BUILD_STATIC}")
+message(STATUS "  Output directory:  ${OUTPUT_DIR}")
+message(STATUS "  CMAKE_CXX_FLAGS:   ${CMAKE_CXX_FLAGS}")
 
 # Enable testing
 enable_testing()
@@ -92,10 +148,4 @@ message(STATUS "  C++ compiler flags:${CMAKE_CXX_FLAGS}")
 message(STATUS "  Install prefix:    ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  Arrow version:     ${ARROW_VERSION}")
 message(STATUS "  Parquet version:   ${PARQUET_VERSION}")
-if(Drogon_FOUND OR TARGET Drogon::Drogon)
-    message(STATUS "  Drogon version:    ${Drogon_VERSION}")
-    message(STATUS "  Web server:        Enabled")
-else()
-    message(STATUS "  Web server:        Disabled")
-endif()
 message(STATUS "") 

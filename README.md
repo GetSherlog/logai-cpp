@@ -1,315 +1,172 @@
-# LogAI-CPP
+# LogAI - AI-Powered Log Analysis Tool
 
-A high-performance log analysis library written in C++.
-
-## Quick Start with Docker
-
-```bash
-# Start the LogAI-CPP server and access the anomaly detection tool
-./start.sh && open http://localhost:8080/anomaly_detection.html
-```
-
-This command builds and starts the Docker container with the LogAI-CPP web server, then opens the anomaly detection tool in your browser. For detailed Docker setup information, see [DOCKER.md](DOCKER.md).
+A powerful command-line tool for analyzing logs using AI, semantic search, and local LLM inference.
 
 ## Features
 
-- Fast log file loading from various formats (CSV, JSON, custom regex patterns)
-- Parallel log processing with multi-threading
-- Memory-mapped file reading for large log files
-- Zero-copy data integration with Apache Arrow
-- SIMD-accelerated parsing operations
-- Support for structured log formats and custom patterns
-- High-performance DRAIN log parser for efficient log template extraction
-- LogBERT vectorizer for BERT-based log representation learning
+- Semantic search across log files with template extraction
+- Pattern analysis with AI-powered insights
+- Anomaly detection using machine learning algorithms
+- DuckDB integration for structured data queries
+- Vector embeddings for efficient similarity search
+- Local LLM inference with llama.cpp integration
+- High-performance processing with Folly data structures
 
-## Log Parsers
+## Dependencies
 
-The library includes several log parsers for different formats:
+The following dependencies are required:
 
-- **CSV Parser**: For parsing CSV-formatted logs
-- **JSON Parser**: For parsing JSON-formatted logs
-- **Regex Parser**: For parsing logs using custom regex patterns
-- **DRAIN Parser**: A high-performance implementation of the DRAIN log parsing algorithm, which efficiently groups similar log messages and extracts their templates and parameters
+- C++17 or later
+- CMake 3.15 or later
+- cxxopts (for CLI argument parsing)
+- Eigen3 (for linear algebra operations)
+- abseil-cpp (for string utilities)
+- nlohmann-json (for JSON processing)
+- Apache Arrow (for efficient data handling)
+- libcurl (for HTTP requests)
+- Folly (for high-performance data structures)
+- DuckDB (for structured data queries)
+- llama.cpp (for local LLM inference)
 
-## LogBERT Vectorizer
+### Installing Dependencies
 
-The LogBERT vectorizer module converts log messages into token sequences that can be fed into BERT-based models for advanced log analytics. It includes:
-
-- High-performance C++ implementation of WordPiece tokenization
-- Multi-threaded processing for faster tokenization of large log datasets
-- Domain-specific token handling for common log elements (IPs, timestamps, paths)
-- Support for both token IDs and attention masks for BERT compatibility
-- Model-specific normalization (case sensitivity handling)
-- Batch processing capabilities for optimal performance
-- Tokenizer model persistence (save/load)
-
-### Using the LogBERT Vectorizer
-
-```cpp
-#include "logbert_vectorizer.h"
-#include <vector>
-#include <string>
-
-// Configure the vectorizer
-LogBERTVectorizerConfig config;
-config.model_name = "bert-base-uncased";
-config.max_token_len = 384;
-config.max_vocab_size = 5000;
-config.custom_tokens = {"<IP>", "<TIME>", "<PATH>", "<HEX>"};
-config.num_proc = 8;  // Use 8 threads
-
-// Create vectorizer
-LogBERTVectorizer vectorizer(config);
-
-// Sample logs to process
-std::vector<std::string> logs = {
-    "2023-01-15T12:34:56 INFO [app.server] Server started at port 8080",
-    "2023-01-15T12:35:01 ERROR [app.db] Failed to connect to database at 192.168.1.100"
-};
-
-// Either train a new tokenizer
-vectorizer.fit(logs);
-
-// Or load a pre-trained tokenizer
-// vectorizer.load_tokenizer("./tokenizer_model.json");
-
-// Tokenize logs with attention masks (for BERT compatibility)
-auto results = vectorizer.transform_with_attention(logs);
-
-// Process results - each result contains token IDs and attention mask
-for (const auto& [token_ids, attention_mask] : results) {
-    // Use token_ids and attention_mask with BERT models
-}
+On macOS (using Homebrew):
+```bash
+brew install cmake eigen abseil nlohmann-json apache-arrow curl folly duckdb
 ```
 
-For more detailed information, see [LOGBERT.md](docs/LOGBERT.md)
-
-### Testing the LogBERT Implementation
-
-We provide several scripts to test the LogBERT implementation:
-
-1. **Basic Functionality Test**
+On Ubuntu/Debian:
 ```bash
-./scripts/run-logbert-test.sh
+sudo apt-get update
+sudo apt-get install -y \
+    build-essential \
+    cmake \
+    libeigen3-dev \
+    libabsl-dev \
+    nlohmann-json3-dev \
+    libarrow-dev \
+    libcurl4-openssl-dev \
+    libcxxopts-dev \
+    libfolly-dev
 ```
 
-2. **Comprehensive Unit Tests**
-```bash
-./scripts/run-logbert-unit-tests.sh
-```
+## Building
 
-3. **Integration with BERT Models**
-```bash
-./scripts/run-logbert-with-model.sh
-```
+### Basic Build
 
-The integration test script:
-- Downloads a pre-trained BERT model using HuggingFace Transformers
-- Demonstrates connecting the C++ tokenizer output with the BERT model
-- Shows how to generate embeddings from tokenized logs
-
-## Apache Arrow Integration
-
-The library uses Apache Arrow as its dataframe implementation, which provides several benefits:
-
-- **High Performance**: Arrow's columnar memory layout enables vectorized operations
-- **Zero-Copy Sharing**: Share data between different tools without serialization/deserialization
-- **Language Interoperability**: Easily work with the same data in Python, R, and other languages
-- **Ecosystem Integration**: Smooth integration with tools like DuckDB, Parquet, and ML frameworks
-- **Memory Efficiency**: Process larger-than-memory datasets with streaming capabilities
-
-## Installation
-
-### Prerequisites
-
-- C++17 compatible compiler
-- CMake 3.10 or higher
-- Apache Arrow C++ libraries
-
-### Building From Source
+For a simple build on your current platform:
 
 ```bash
-# Install Apache Arrow (varies by platform)
-# For macOS:
-brew install apache-arrow
-
-# For Ubuntu:
-# apt install libarrow-dev
-
-# Clone the repository
-git clone https://github.com/yourusername/logai-cpp.git
-cd logai-cpp
-
-# Create build directory
-mkdir build && cd build
-
-# Configure the project
+mkdir build
+cd build
 cmake ..
-
-# Build
 make
-
-# Install
-make install
 ```
+
+### Cross-Platform Build System
+
+LogAI includes a modular build system that can create binaries for multiple platforms:
+
+- Linux x86_64
+- Linux ARM64
+- macOS ARM64 (Apple Silicon)
+
+#### Requirements for Cross-Platform Building
+
+- Docker (for Linux builds)
+- macOS with Apple Silicon (for macOS ARM64 builds)
+- Homebrew (for macOS dependency installation)
+
+#### Building for All Platforms
+
+To build for all supported platforms that your environment can handle:
+
+```bash
+./build_scripts/build_all.sh
+```
+
+This will:
+1. Detect your current platform
+2. Build native binaries for your platform
+3. Use Docker to build binaries for Linux platforms (if Docker is available)
+4. Create a combined package with all built binaries
+
+#### Platform-Specific Builds
+
+To build only for a specific platform:
+
+- **Linux ARM64**: `docker build -f build_scripts/Dockerfile.linux-arm64 -t logai-linux-arm64 .`
+- **Linux x86_64**: `docker build -f build_scripts/Dockerfile.linux-x86_64 -t logai-linux-x86_64 .`
+- **macOS ARM64**: `./build_scripts/build_macos_arm64.sh` (must run on Apple Silicon Mac)
+
+#### Build Output
+
+The build system produces:
+- Platform-specific binaries in `bin/<platform>-<arch>/`
+- Required libraries in `lib/<platform>-<arch>/`
+- Deployment scripts for each platform
+- A combined package `logai-release.tar.gz` with all builds
 
 ## Usage
 
-Here's a basic example of reading logs and converting them to an Arrow dataframe:
+The tool provides several commands for log analysis:
 
-```cpp
-#include <logai/dataloader/file_data_loader.h>
-#include <logai/dataloader/data_loader_config.h>
-#include <arrow/api.h>
+1. Parse a log file and extract templates:
+```bash
+./logai --parse path/to/logfile.log
+```
 
-int main() {
-    // Configure the data loader
-    logai::DataLoaderConfig config;
-    config.file_path = "example_logs.json";
-    config.log_type = "json";
-    config.num_threads = 4;
-    config.dimensions = {"timestamp", "severity", "body", "service_name"};
-    
-    // Create the data loader
-    logai::FileDataLoader loader(config);
-    
-    // Load logs and convert to Arrow dataframe
-    std::shared_ptr<arrow::Table> df = loader.log_to_dataframe("example_logs.json", "json");
-    
-    // Work with the Arrow Table
-    std::cout << "Number of rows: " << df->num_rows() << std::endl;
-    std::cout << "Number of columns: " << df->num_columns() << std::endl;
-    
-    return 0;
-}
+2. Search logs semantically:
+```bash
+./logai --search "error occurred during database connection"
+```
+
+3. Analyze patterns in logs:
+```bash
+./logai --analyze path/to/logfile.log
+```
+
+4. Detect anomalies:
+```bash
+./logai --detect path/to/logfile.log
+```
+
+For more information about available options:
+```bash
+./logai --help
+```
+
+## Deployment
+
+The build system creates deployment scripts for each platform. After extracting the `logai-release.tar.gz` archive:
+
+1. **Automatic deployment**: Run `./deploy.sh` to automatically detect your platform and deploy
+2. **Manual platform deployment**:
+   - Linux ARM64: `./deploy_linux_arm64.sh`
+   - Linux x86_64: `./deploy_linux_x86_64.sh`
+   - macOS ARM64: `./deploy_macos_arm64.sh`
+
+The deployment scripts:
+1. Copy needed libraries to `~/.local/lib/`
+2. Make the binary executable
+3. Provide instructions for running the tool
+
+## Running in Docker
+
+A Docker image is available for easy deployment:
+
+```bash
+# Build the Docker image
+docker-compose build
+
+# Run the container
+docker-compose up -d
+
+# Use the CLI tool inside the container
+docker exec -it logai-web bash
+logai --help
 ```
 
 ## License
 
-This project is licensed under the BSD-3-Clause License - see the LICENSE file for details.
-
-## Performance Testing
-
-A performance test is included to benchmark the library's log parsing and Parquet export capabilities:
-
-1. To run the performance test:
-   ```bash
-   ./scripts/run-perf-test.sh
-   ```
-
-2. The test will:
-   - Parse a sample log file (or you can provide your own)
-   - Convert it to Arrow Table format
-   - Export it to Parquet
-   - Measure and report timing for each operation
-
-3. For detailed performance test documentation, see [PERFORMANCE_TEST.md](docs/PERFORMANCE_TEST.md)
-
-## LogBERT Testing
-
-To test the LogBERT vectorizer implementation:
-
-```bash
-./scripts/run-logbert-test.sh
-```
-
-This will build and run the LogBERT test program, which demonstrates:
-- Training a WordPiece tokenizer on log data
-- Tokenizing log entries with multi-threading
-- Performance benchmarks for tokenization 
-
-## Log Search Functionality
-
-### Overview
-The LogAI-CPP library now includes a powerful log search capability that helps you find log templates similar to a given query. This functionality uses cosine similarity between embeddings of your query and stored log templates to find the most relevant matches.
-
-### How it Works
-1. When parsing logs, the system automatically builds a database of templates and their embeddings
-2. Templates are persisted to disk for future use
-3. When you search with a query, the system:
-   - Creates an embedding for your query
-   - Compares it to all stored template embeddings using cosine similarity
-   - Returns the most similar templates along with sample log messages
-
-### API Endpoint
-The search functionality is available through the following REST API endpoint:
-
-```
-POST /api/parser/search
-```
-
-Request payload:
-```json
-{
-  "query": "user login failed",
-  "topK": 10
-}
-```
-
-Response:
-```json
-{
-  "query": "user login failed",
-  "totalResults": 2,
-  "results": [
-    {
-      "templateId": 42,
-      "similarity": 0.89,
-      "template": "User <*> login failed: <*>",
-      "logSamples": [
-        "User john.doe login failed: invalid password",
-        "User admin login failed: account locked"
-      ],
-      "totalLogs": 156
-    },
-    {
-      "templateId": 17,
-      "similarity": 0.75,
-      "template": "Failed login attempt from IP <*>",
-      "logSamples": [
-        "Failed login attempt from IP 192.168.1.105"
-      ],
-      "totalLogs": 24
-    }
-  ]
-}
-```
-
-### Code Usage
-You can also use the search functionality programmatically:
-
-```cpp
-#include "drain_parser.h"
-
-// Initialize the parser
-DataLoaderConfig config;
-DrainParser parser(config);
-
-// Process logs (this builds the template database)
-for (const auto& log : logs) {
-    parser.parse_line(log);
-}
-
-// Search for similar templates
-std::string query = "user login failed";
-int top_k = 10;
-auto results = parser.search_templates(query, top_k);
-
-// Process results
-for (const auto& [template_id, similarity] : results) {
-    std::string templ = parser.get_template_store().get_template(template_id);
-    auto logs = parser.get_logs_for_template(template_id);
-    
-    std::cout << "Template: " << templ << " (similarity: " << similarity << ")" << std::endl;
-    std::cout << "Sample logs:" << std::endl;
-    for (size_t i = 0; i < std::min(logs.size(), size_t(3)); ++i) {
-        std::cout << "  " << logs[i].body << std::endl;
-    }
-}
-
-// Save templates for future use
-parser.save_templates("./templates.json");
-
-// Load templates in a later session
-parser.load_templates("./templates.json");
-``` 
+MIT License 
