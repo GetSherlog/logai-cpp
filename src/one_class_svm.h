@@ -1,10 +1,12 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
 #include <Eigen/Dense>
-#include "std_includes.h"
 
 namespace logai {
 

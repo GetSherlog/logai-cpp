@@ -3,11 +3,12 @@
  * @brief C++ implementation of Gemini embedding API vectorizer for log data
  */
 #pragma once
-#include "std_includes.h"
+#include <algorithm>
+#include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
-#include <optional>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <folly/container/F14Map.h>

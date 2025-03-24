@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(logai)
 
+# Add our CMake module path
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -14,6 +17,25 @@ if(APPLE)
         set(PLATFORM_ARCH "x86_64")
         set(PLATFORM_OPTIMIZATION "-march=native")
     endif()
+    
+    # Add macOS-specific compiler and linker flags
+    # Note: The main flags should be passed via CMAKE_CXX_FLAGS from build_and_run.sh
+    # This ensures we're picking up the correct SDK and C++ headers
+    if(NOT CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
+        # Only add if not already specified in CMAKE_CXX_FLAGS
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -stdlib=libc++")
+    endif()
+    
+    # Print SDK info for debugging
+    message(STATUS "macOS SDK information:")
+    execute_process(
+        COMMAND xcrun --show-sdk-path
+        OUTPUT_VARIABLE MACOS_SDK_PATH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    message(STATUS "  SDK path: ${MACOS_SDK_PATH}")
+    
 elseif(UNIX)
     set(PLATFORM_NAME "linux")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
@@ -34,22 +56,64 @@ option(BUILD_STATIC "Build with static linking" OFF)
 
 # Find required packages
 find_package(CURL REQUIRED)
-find_package(DuckDB REQUIRED)
-find_package(nlohmann_json REQUIRED)
+
+# Set up DuckDB manually
+set(DUCKDB_DIR "${CMAKE_SOURCE_DIR}/duckdb-lib")
+if(EXISTS "${DUCKDB_DIR}/include")
+    set(DUCKDB_INCLUDE_DIR "${DUCKDB_DIR}/include")
+elseif(EXISTS "${DUCKDB_DIR}")
+    # DuckDB might have headers directly in the lib directory
+    set(DUCKDB_INCLUDE_DIR "${DUCKDB_DIR}")
+else()
+    message(FATAL_ERROR "DuckDB directory not found at ${DUCKDB_DIR}")
+endif()
+
+if(EXISTS "${DUCKDB_DIR}/libduckdb.a")
+    set(DUCKDB_LIBRARY "${DUCKDB_DIR}/libduckdb.a")
+elseif(EXISTS "${DUCKDB_DIR}/duckdb.lib")
+    set(DUCKDB_LIBRARY "${DUCKDB_DIR}/duckdb.lib")
+elseif(EXISTS "${DUCKDB_DIR}/libduckdb.so")
+    set(DUCKDB_LIBRARY "${DUCKDB_DIR}/libduckdb.so")
+elseif(EXISTS "${DUCKDB_DIR}/libduckdb.dylib")
+    set(DUCKDB_LIBRARY "${DUCKDB_DIR}/libduckdb.dylib")
+else()
+    message(FATAL_ERROR "DuckDB library not found in ${DUCKDB_DIR}")
+endif()
+
+message(STATUS "Using DuckDB include directory: ${DUCKDB_INCLUDE_DIR}")
+message(STATUS "Using DuckDB library: ${DUCKDB_LIBRARY}")
+
+# Create imported target for DuckDB
+add_library(DuckDB::duckdb STATIC IMPORTED)
+set_target_properties(DuckDB::duckdb PROPERTIES
+    IMPORTED_LOCATION "${DUCKDB_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${DUCKDB_INCLUDE_DIR}"
+)
+
+# Try to find nlohmann_json, if not found we'll use FetchContent
+find_package(nlohmann_json QUIET)
+if(NOT nlohmann_json_FOUND)
+    message(STATUS "nlohmann_json not found, fetching from source")
+    include(FetchContent)
+    FetchContent_Declare(json
+        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(json)
+endif()
+
 find_package(spdlog REQUIRED)
-find_package(Arrow REQUIRED)
+
+# Use pkg-config for Arrow
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ARROW REQUIRED IMPORTED_TARGET arrow)
+pkg_check_modules(PARQUET REQUIRED IMPORTED_TARGET parquet)
+
 find_package(Eigen3 REQUIRED)
 find_package(Folly REQUIRED)
 find_package(Boost REQUIRED COMPONENTS iostreams)
 find_package(ZLIB REQUIRED)
 find_package(BZip2 REQUIRED)
-
-# Add nlohmann/json
-include(FetchContent)
-FetchContent_Declare(json
-    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-)
-FetchContent_MakeAvailable(json)
 
 # Add source files
 set(SOURCES
@@ -104,7 +168,7 @@ target_link_libraries(logai PRIVATE
     DuckDB::duckdb
     nlohmann_json::nlohmann_json
     spdlog::spdlog
-    Arrow::arrow
+    PkgConfig::ARROW
     Eigen3::Eigen
     Folly::folly
     ${Boost_LIBRARIES}

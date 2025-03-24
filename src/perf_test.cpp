@@ -4,12 +4,18 @@
  */
 
 #include "file_data_loader.h"
-#include "std_includes.h"
+#include <algorithm>
+#include <cctype>
 #include <chrono>
-#include <iostream>
-#include <iomanip>
+#include <cstdint>
 #include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <memory>
 #include <regex>
+#include <string>
+#include <string_view>
+#include <vector>
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <arrow/result.h>

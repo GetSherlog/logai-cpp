@@ -5,6 +5,9 @@ lib/
 out/
 cmake-build-*/
 
+# DuckDB library
+duckdb-lib/
+
 # Compiled Object files
 *.o
 *.obj
