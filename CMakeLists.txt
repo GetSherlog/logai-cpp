@@ -7,45 +7,10 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Set platform-specific options
-if(APPLE)
-    set(PLATFORM_NAME "macos")
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
-        set(PLATFORM_ARCH "arm64")
-        set(PLATFORM_OPTIMIZATION "-mcpu=apple-m1")
-    else()
-        set(PLATFORM_ARCH "x86_64")
-        set(PLATFORM_OPTIMIZATION "-march=native")
-    endif()
-    
-    # Add macOS-specific compiler and linker flags
-    # Note: The main flags should be passed via CMAKE_CXX_FLAGS from build_and_run.sh
-    # This ensures we're picking up the correct SDK and C++ headers
-    if(NOT CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
-        # Only add if not already specified in CMAKE_CXX_FLAGS
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -stdlib=libc++")
-    endif()
-    
-    # Print SDK info for debugging
-    message(STATUS "macOS SDK information:")
-    execute_process(
-        COMMAND xcrun --show-sdk-path
-        OUTPUT_VARIABLE MACOS_SDK_PATH
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    message(STATUS "  SDK path: ${MACOS_SDK_PATH}")
-    
-elseif(UNIX)
-    set(PLATFORM_NAME "linux")
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-        set(PLATFORM_ARCH "arm64")
-        set(PLATFORM_OPTIMIZATION "-march=armv8-a")
-    else()
-        set(PLATFORM_ARCH "x86_64")
-        set(PLATFORM_OPTIMIZATION "-march=native")
-    endif()
-endif()
+# Set platform-specific options for Linux only
+set(PLATFORM_NAME "linux")
+set(PLATFORM_ARCH "x86_64")
+set(PLATFORM_OPTIMIZATION "-march=native")
 
 # Output information about the build
 message(STATUS "Building for platform: ${PLATFORM_NAME}-${PLATFORM_ARCH}")
@@ -154,8 +119,8 @@ if(BUILD_STATIC)
     set_target_properties(logai PROPERTIES LINK_FLAGS "-static")
 endif()
 
-# Set output directory based on platform
-set(OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/${PLATFORM_NAME}-${PLATFORM_ARCH}")
+# Set output directory
+set(OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin")
 set_target_properties(logai PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${OUTPUT_DIR}"
@@ -196,13 +161,9 @@ install(TARGETS logai
     RUNTIME DESTINATION bin
 )
 
-# Set rpath for macOS
-if(APPLE)
-    set_target_properties(logai PROPERTIES
-        INSTALL_RPATH "@executable_path/../lib"
-        BUILD_WITH_INSTALL_RPATH TRUE
-    )
-endif()
+# Add pybind11 support
+find_package(pybind11 REQUIRED)
+add_subdirectory(python)
 
 # Print configuration summary
 message(STATUS "Configuration Summary:")

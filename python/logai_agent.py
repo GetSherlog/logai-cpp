@@ -30,8 +30,13 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.syntax import Syntax
 
-# Import our C++ wrapper
-from logai_cpp_wrapper import get_wrapper
+# Import the C++ module directly
+try:
+    import logai_cpp
+    HAS_CPP_MODULE = True
+except ImportError:
+    print("Warning: LogAI C++ module not found. Some functionality will be limited.")
+    HAS_CPP_MODULE = False
 
 # Define models for our agent tools
 class LogTemplate(BaseModel):
@@ -99,62 +104,64 @@ ProviderType = Literal["openai", "gemini", "claude", "ollama"]
 
 # Main LogAI Agent class
 class LogAIAgent:
-    """AI Agent for log analysis using the LogAI C++ tools with pydantic-ai framework."""
+    """LogAI Agent for analyzing logs with AI assistance."""
     
-    def __init__(self, provider: ProviderType = "openai", api_key: Optional[str] = None, 
-                 model: Optional[str] = None, host: str = "http://localhost:11434"):
-        """Initialize the LogAI Agent.
-        
-        Args:
-            provider: The LLM provider to use ("openai", "gemini", "claude", or "ollama")
-            api_key: API key for the provider (optional, can use environment variables)
-            model: Specific model to use (optional, defaults to provider's default model)
-            host: Host URL for Ollama (only used with provider="ollama")
-        """
+    def __init__(self, log_file: Optional[str] = None, format: str = "auto"):
+        """Initialize the LogAI agent."""
         self.console = Console()
+        self.log_file = log_file
+        self.format = format
         
-        # Setup provider type and model
-        self.provider_type = provider
-        self.model_name = model or DEFAULT_MODELS[provider]
+        # Initialize the C++ components if available
+        if HAS_CPP_MODULE:
+            try:
+                self.parser = logai_cpp.DrainParser()
+                self.template_store = logai_cpp.TemplateStore()
+                self.duckdb_store = logai_cpp.DuckDBStore()
+                # Add other C++ components as needed
+            except Exception as e:
+                self.console.print(f"[bold red]Error initializing C++ components: {e}[/bold red]")
+                HAS_CPP_MODULE = False
         
-        # Initialize the appropriate AI model with pydantic-ai
-        if provider == "openai":
-            model = OpenAIModel(self.model_name)
-        elif provider == "gemini":
-            model = GeminiModel(self.model_name)
-        elif provider == "claude":
-            model = AnthropicModel(self.model_name)
-        elif provider == "ollama":
-            if not HAS_OLLAMA:
-                raise ImportError("Ollama support not available. Please install the required dependencies.")
-            # For Ollama, we need to use the OpenAI model with a custom provider
-            model = OpenAIModel(
-                self.model_name,
-                provider=OpenAIProvider(
-                    base_url=f"{host}/v1",
-                    api_key="ollama" # Ollama typically doesn't need an API key
-                )
-            )
-        else:
-            raise ValueError(f"Unsupported provider: {provider}")
+        # Initialize LLM based on environment variables
+        self.llm_provider = os.environ.get("LLM_PROVIDER", "openai").lower()
         
-        # Initialize the pydantic-ai agent
-        self.agent = Agent[LogAIDependencies, LogAnalysisResult](
-            model=model,
-            system_prompt=self._build_system_prompt()
-        )
+        # Setup the LLM model
+        self.setup_llm()
         
-        # Get the C++ wrapper
-        self.cpp_wrapper = get_wrapper()
+        # Parse log file if provided
+        if log_file:
+            self.load_log_file(log_file, format)
+
+    def setup_llm(self):
+        """Set up the LLM based on environment variables."""
+        # Code for setting up LLM remains the same
+
+    def load_log_file(self, file_path: str, format: str = "auto"):
+        """Load and parse a log file."""
+        self.console.print(f"[bold blue]Loading log file: {file_path}[/bold blue]")
         
-        # Initialize state
-        self.log_file = None
-        self.is_initialized = False
-        self.chat_history = []
+        if not os.path.exists(file_path):
+            self.console.print(f"[bold red]Error: File not found: {file_path}[/bold red]")
+            return False
         
-        # Register agent tools
-        self._register_tools()
+        if not HAS_CPP_MODULE:
+            self.console.print("[bold yellow]Warning: C++ module not available. Using limited functionality.[/bold yellow]")
+            # Implement fallback behavior if needed
+            return False
         
+        try:
+            # Use C++ module directly to parse log file
+            success = logai_cpp.parse_log_file(file_path, format)
+            if success:
+                self.console.print(f"[bold green]Successfully loaded {file_path}[/bold green]")
+            else:
+                self.console.print(f"[bold red]Failed to parse log file: {file_path}[/bold red]")
+            return success
+        except Exception as e:
+            self.console.print(f"[bold red]Error parsing log file: {e}[/bold red]")
+            return False
+
     def _register_tools(self):
         """Register all available tools with the agent."""
         

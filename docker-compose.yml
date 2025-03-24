@@ -1,26 +1,19 @@
+version: '3'
+
 services:
-  logai-web:
+  logai-cpp:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logai-web
-    ports:
-      - "8080:8080"
+    image: logai-cpp
+    container_name: logai-cpp-container
     volumes:
-      - ./logs:/var/log/logai
-      - ./uploads:/app/uploads
+      - ./:/workspace
+      - ./logs:/workspace/logs
+      - ./uploads:/workspace/uploads
     environment:
-      - TZ=UTC
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-    networks:
-      - logai-network
-
-networks:
-  logai-network:
-    driver: bridge 
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OLLAMA_ENDPOINT=${OLLAMA_ENDPOINT}
+    tty: true
+    stdin_open: true 

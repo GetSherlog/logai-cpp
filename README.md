@@ -1,148 +1,114 @@
-# LogAI-CPP: High-Performance Log Analysis Engine with AI
+# LogAI C++
 
-LogAI-CPP is a high-performance log analysis library written in C++ with Python bindings, integrating AI capabilities for advanced log analysis, visualization, and insights.
+A C++ library for log analysis with Python bindings.
 
-## Features
+## Overview
 
-- **High-Performance C++ Core**: Efficiently process and analyze large log files using optimized C++ code
-- **Python Integration**: Seamless Python bindings that provide the best of both worlds
-- **AI-Powered Analysis**: Intelligent log analysis using LLMs (OpenAI GPT-4o by default)
-- **Data Visualization**: Generate insightful visualizations from log data
-- **Clustering**: Group similar logs using DBSCAN clustering
-- **Template Extraction**: Extract log templates using the DRAIN algorithm
-- **SQL Queries**: Run SQL queries against log data using DuckDB integration
-- **Vector Search**: Find similar log patterns using vector search techniques
-- **Time Analysis**: Analyze logs over time ranges and detect trends
-- **Anomaly Detection**: Identify unusual patterns and outliers in logs
+LogAI C++ provides tools for log analysis, template extraction, clustering, and anomaly detection. It includes:
 
-## LLM Integration
+- Drain parser for log template extraction
+- Vector embedding generation
+- Clustering algorithms (DBSCAN)
+- Anomaly detection (One-Class SVM)
+- DuckDB integration for storage and queries
+- Direct Python bindings for cross-platform usage
 
-LogAI-CPP supports multiple LLM providers for AI-powered log analysis:
+## Simplified Architecture
 
-- **OpenAI**: Use GPT models via OpenAI's API
-- **Ollama**: Run open-source models locally via Ollama
-- **Google Gemini**: Connect to Google's Gemini API
-- **Custom API**: Connect to any compatible LLM API
+This project uses a streamlined approach:
 
-To configure the LLM provider, set the appropriate environment variables:
+1. C++ core library for high-performance log processing
+2. Direct Python bindings using pybind11 (no wrapper layer)
+3. Python CLI tool that uses the bindings directly
+4. Docker-based build system that creates a portable wheel package
 
-```bash
-# OpenAI Configuration
-export LLM_PROVIDER=openai
-export OPENAI_API_KEY=your_api_key_here
-export OPENAI_MODEL=gpt-4o
-
-# OR Ollama Configuration
-export LLM_PROVIDER=ollama
-export OLLAMA_ENDPOINT=http://localhost:11434/api/generate
-export OLLAMA_MODEL=llama3
-
-# OR Google Gemini Configuration
-export LLM_PROVIDER=gemini
-export GEMINI_API_KEY=your_api_key_here
-export GEMINI_MODEL=gemini-pro
-```
-
-You can also configure the LLM provider in your Python code:
-
-```python
-from logai import LogAI
-
-# Initialize with OpenAI
-logai = LogAI(llm_provider="openai", api_key="your_openai_key")
-
-# Initialize with Ollama
-logai = LogAI(llm_provider="ollama", api_endpoint="http://localhost:11434/api/generate", model="llama3")
-
-# Initialize with Gemini
-logai = LogAI(llm_provider="gemini", api_key="your_gemini_key", model="gemini-pro")
-```
+This architecture maximizes performance by eliminating unnecessary layers between the Python CLI and C++ core.
 
 ## Quick Start
 
-### Building LogAI-CPP
+### Build and Install
 
-We provide a Docker-based build script that compiles the C++ extension for your target platform:
+Simply run the build script:
 
 ```bash
-# Make the build script executable
-chmod +x build_and_run.sh
-
-# Run the build script
 ./build_and_run.sh
 ```
 
-Follow the prompts to select your target platform. The script will build the C++ extension in Docker and provide instructions for running the LogAI agent.
+This script will:
+1. Build the Docker image with the C++ library and Python bindings
+2. Extract the wheel package to the `./wheels` directory
+3. Provide instructions for installing and using the CLI
 
-### Using the LogAI Agent CLI
+### Using the Python CLI on Your Host Machine
 
-1. Set your OpenAI API key:
+After the build completes:
+
+1. Install the wheel package:
    ```bash
+   pip install ./wheels/logai_cpp-*.whl
+   ```
+
+2. Configure your LLM provider:
+
+   **For OpenAI (default):**
+   ```bash
+   export LLM_PROVIDER=openai
    export OPENAI_API_KEY=your_api_key_here
+   export OPENAI_MODEL=gpt-4o  # Optional, defaults to gpt-4o
    ```
 
-2. Run the CLI with a log file:
+   **For Google Gemini:**
    ```bash
-   python python/logai_agent_cli.py --log-file path/to/your/logfile.log
+   export LLM_PROVIDER=gemini
+   export GEMINI_API_KEY=your_api_key_here
+   export GEMINI_MODEL=gemini-pro  # Optional
    ```
 
-3. Use the interactive CLI to ask questions about your log data:
-   - "Show me all error logs from the last 24 hours"
-   - "Find patterns of failed connection attempts"
-   - "Visualize the distribution of log levels"
-   - "Cluster logs by response time and analyze outliers"
+   **For Ollama (local LLMs):**
+   ```bash
+   export LLM_PROVIDER=ollama
+   export OLLAMA_ENDPOINT=http://localhost:11434/api/generate
+   export OLLAMA_MODEL=llama3  # Specify your Ollama model
+   ```
 
-## Example Scripts
+3. Run the CLI tool:
+   ```bash
+   logai-agent --log-file path/to/your/logfile.log
+   ```
 
-We provide several example scripts to demonstrate LogAI's capabilities:
+## Example Commands
 
 ```bash
-# Basic examples
-python python/examples/connection_drops.py
-python python/examples/performance_patterns.py
-python python/examples/interactive_query.py
+# Extract log templates
+logai-agent extract --log-file logs/example.log
 
-# Advanced features
-python python/examples/advanced_features.py
-python python/examples/log_clustering.py
-python python/examples/visualization_example.py
+# Cluster logs
+logai-agent cluster --log-file logs/example.log
+
+# Detect anomalies
+logai-agent anomaly --log-file logs/example.log
+
+# Interactive analysis
+logai-agent analyze --log-file logs/example.log
 ```
 
-## Log Analysis and Visualization
+## Docker Development Environment (Optional)
 
-LogAI can generate powerful visualizations from log data:
+If you want to run the tools inside a Docker container for development:
 
-1. **Log Level Distribution**:
-   - Bar charts showing distribution of log levels
-   - Percentage of ERROR vs other log levels
+```bash
+docker run -it --name logai-cpp-container \
+  -v "$(pwd):/workspace" \
+  -v "$(pwd)/logs:/workspace/logs" \
+  -v "$(pwd)/uploads:/workspace/uploads" \
+  -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+  -e LLM_PROVIDER="${LLM_PROVIDER}" \
+  -e GEMINI_API_KEY="${GEMINI_API_KEY}" \
+  -e OLLAMA_ENDPOINT="${OLLAMA_ENDPOINT}" \
+  -e OLLAMA_MODEL="${OLLAMA_MODEL}" \
+  logai-cpp
+```
 
-2. **Time Trend Analysis**:
-   - Line charts showing log activity over time
-   - Identification of peak activity periods
+## Python Integration
 
-3. **Clustering Analysis**:
-   - Grouping similar logs using DBSCAN
-   - Visualizing cluster sizes and characteristics
-
-4. **Performance Analysis**:
-   - Response time distributions and outliers
-   - Correlation between log levels and performance metrics
-
-## Architecture
-
-LogAI combines:
-
-1. **C++ Core**: High-performance log parsing, template extraction, and analytics
-2. **Python Bindings**: Seamless integration with Python ecosystem
-3. **AI Agent**: LLM-powered assistant for intelligent log analysis
-4. **Visualization Engine**: Data visualization capabilities using matplotlib and seaborn
-
-## Requirements
-
-- Python 3.8+
-- Docker (for building the C++ extension)
-- OpenAI API key (for AI-powered analysis)
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details. 
+The Python module `logai_cpp` provides direct bindings to the C++ library with no intermediate wrapper layer, ensuring maximum performance. See the `python/examples` directory for sample code. 
