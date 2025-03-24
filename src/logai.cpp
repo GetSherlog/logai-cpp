@@ -6,182 +6,321 @@
 #include <sstream>
 #include <chrono>
 #include <cxxopts.hpp>
-#include "drain_parser.h"
-#include "gemini_vectorizer.h"
-#include "template_store.h"
-#include "feature_extractor.h"
+#include <nlohmann/json.hpp>
 #include "file_data_loader.h"
-#include "dbscan_clustering_kdtree.h"
-#include "one_class_svm.h"
-#include "duckdb_store.h"
-#include "llm_interface.h"
+#include "log_parser.h"
+
+using json = nlohmann::json;
 
 class LogAI {
 public:
-    LogAI() {
-        parser = std::make_unique<DrainParser>();
-        vectorizer = std::make_unique<GeminiVectorizer>();
-        templateStore = std::make_unique<TemplateStore>();
-        featureExtractor = std::make_unique<FeatureExtractor>();
-        anomalyDetector = std::make_unique<OneClassSVM>();
-        duckdbStore = std::make_unique<DuckDBStore>();
-        llmInterface = std::make_unique<LLMInterface>();
-    }
+    enum class InputFormat {
+        LOGFMT,  // default
+        JSONL,
+        JSON,
+        CSV,
+        LINE,
+        SYSLOG,
+        LOG4J,
+        CEF,
+        UNIX,
+        RFC5424
+    };
 
-    void parse(const std::string& file_path) {
-        std::cout << "Parsing log file: " << file_path << std::endl;
-        
-        FileDataLoader loader(file_path);
-        std::vector<std::string> log_lines;
-        loader.loadData(log_lines);
+    enum class OutputFormat {
+        LOGFMT,  // default
+        JSONL,
+        JSON,
+        CSV,
+        TSV,
+        PSV
+    };
 
-        std::cout << "Found " << log_lines.size() << " log entries" << std::endl;
+    struct Options {
+        InputFormat input_format = InputFormat::LOGFMT;
+        OutputFormat output_format = OutputFormat::LOGFMT;
+        std::string input_encoding = "utf-8";
+        std::string input_delimiter = ",";
+        bool no_header = false;
+        bool logical_lines = false;
+        std::vector<std::string> keys;
+        std::vector<std::string> exclude_keys;
+        std::vector<std::string> log_levels;
+        std::vector<std::string> exclude_log_levels;
+        std::string since;
+        std::string until;
+        std::string grep_pattern;
+        bool grep_case_sensitive = true;
+        bool stats_only = false;
+        bool follow = false;
+        bool color = true;
+    };
+
+    void process(const std::string& file_path, const Options& opts) {
+        std::cout << "Processing log file: " << file_path << std::endl;
         
-        // Parse logs and extract templates
-        for (const auto& line : log_lines) {
-            auto template_info = parser->parse(line);
-            templateStore->addTemplate(template_info);
-            
-            // Store in DuckDB
-            if (!template_info.template_str.empty()) {
-                // Initialize table if needed
-                std::vector<std::string> columns = {"timestamp", "level", "body"};
-                std::vector<std::string> types = {"VARCHAR", "VARCHAR", "VARCHAR"};
-                duckdbStore->init_template_table(template_info.template_str, columns, types);
-                
-                // Insert record
-                duckdbStore->insert_log_record(template_info.template_str, template_info);
-            }
+        // Configure file loader
+        FileDataLoaderConfig loader_config;
+        loader_config.encoding = opts.input_encoding;
+        loader_config.delimiter = opts.input_delimiter;
+        loader_config.has_header = !opts.no_header;
+        loader_config.logical_lines = opts.logical_lines;
+        loader_config.format = formatToString(opts.input_format);
+
+        FileDataLoader loader(file_path, loader_config);
+        
+        if (opts.follow) {
+            processStreamingLogs(loader, opts);
+        } else {
+            processStaticLogs(loader, opts);
         }
-
-        std::cout << "Extracted " << templateStore->getTemplateCount() << " unique templates" << std::endl;
-        
-        // Save templates to disk for future use
-        templateStore->saveTemplates("templates.json");
-    }
-
-    void search(const std::string& query, const std::string& file_path) {
-        std::cout << "Searching for: " << query << " in " << file_path << std::endl;
-        
-        // First, find similar templates using vector similarity
-        auto similar_templates = templateStore->search(query, 5);  // Get top 5 similar templates
-        
-        if (similar_templates.empty()) {
-            std::cout << "No similar templates found." << std::endl;
-            return;
-        }
-
-        // For each similar template, generate and execute a DuckDB query
-        for (const auto& [template_id, similarity] : similar_templates) {
-            auto template_str = templateStore->get_template(template_id);
-            if (!template_str) continue;
-
-            // Get schema for this template
-            auto schema = duckdbStore->get_schema(*template_str);
-            
-            // Generate DuckDB query using LLM
-            auto db_query = llmInterface->generate_query(query, *template_str, schema);
-            if (!db_query) {
-                std::cout << "Failed to generate query for template: " << *template_str << std::endl;
-                continue;
-            }
-
-            // Execute query
-            auto results = duckdbStore->execute_query(*db_query);
-            
-            // Display results with color
-            std::cout << "\n\033[1;34mTemplate: " << *template_str << " (similarity: " << similarity << ")\033[0m\n";
-            for (const auto& row : results) {
-                std::cout << "\033[1;32m[";
-                for (size_t i = 0; i < row.size(); ++i) {
-                    if (i > 0) std::cout << " | ";
-                    std::cout << row[i];
-                }
-                std::cout << "]\033[0m\n";
-            }
-        }
-    }
-
-    void analyze(const std::string& file_path) {
-        std::cout << "Analyzing patterns in: " << file_path << std::endl;
-        
-        FileDataLoader loader(file_path);
-        std::vector<std::string> log_lines;
-        loader.loadData(log_lines);
-
-        // Extract features from logs
-        auto features = featureExtractor->extractFeatures(log_lines);
-
-        // Analyze patterns
-        std::cout << "\nPattern Analysis Results:" << std::endl;
-        std::cout << "------------------------" << std::endl;
-        
-        // Display most common patterns
-        auto patterns = featureExtractor->getCommonPatterns(features);
-        std::cout << "\nMost Common Patterns:" << std::endl;
-        for (const auto& [pattern, count] : patterns) {
-            std::cout << pattern << ": " << count << " occurrences" << std::endl;
-        }
-
-        // Display temporal patterns
-        auto temporal_patterns = featureExtractor->getTemporalPatterns(features);
-        std::cout << "\nTemporal Patterns:" << std::endl;
-        for (const auto& [time, count] : temporal_patterns) {
-            std::cout << time << ": " << count << " events" << std::endl;
-        }
-    }
-
-    void detectAnomalies(const std::string& file_path) {
-        std::cout << "Detecting anomalies in: " << file_path << std::endl;
-        
-        FileDataLoader loader(file_path);
-        std::vector<std::string> log_lines;
-        loader.loadData(log_lines);
-
-        // Extract features
-        auto features = featureExtractor->extractFeatures(log_lines);
-
-        // Train anomaly detector
-        anomalyDetector->train(features);
-
-        // Detect anomalies
-        std::vector<bool> is_anomaly = anomalyDetector->detect(features);
-
-        // Display results
-        std::cout << "\nAnomaly Detection Results:" << std::endl;
-        std::cout << "------------------------" << std::endl;
-        
-        int anomaly_count = 0;
-        for (size_t i = 0; i < log_lines.size(); ++i) {
-            if (is_anomaly[i]) {
-                std::cout << "ANOMALY: " << log_lines[i] << std::endl;
-                anomaly_count++;
-            }
-        }
-
-        std::cout << "\nFound " << anomaly_count << " anomalies out of " 
-                  << log_lines.size() << " total entries" << std::endl;
     }
 
 private:
-    std::unique_ptr<DrainParser> parser;
-    std::unique_ptr<GeminiVectorizer> vectorizer;
-    std::unique_ptr<TemplateStore> templateStore;
-    std::unique_ptr<FeatureExtractor> featureExtractor;
-    std::unique_ptr<OneClassSVM> anomalyDetector;
-    std::unique_ptr<DuckDBStore> duckdbStore;
-    std::unique_ptr<LLMInterface> llmInterface;
+    void processStreamingLogs(FileDataLoader& loader, const Options& opts) {
+        std::cout << "Following log file..." << std::endl;
+        
+        loader.streamData([this, &opts](const LogParser::LogEntry& entry) {
+            processLogEntry(entry, opts);
+            return true;  // continue streaming
+        });
+    }
+
+    void processStaticLogs(FileDataLoader& loader, const Options& opts) {
+        std::vector<LogParser::LogEntry> entries;
+        loader.loadData(entries);
+
+        std::cout << "Found " << entries.size() << " log entries" << std::endl;
+        
+        if (opts.stats_only) {
+            showStats(entries, opts);
+            return;
+        }
+
+        for (const auto& entry : entries) {
+            processLogEntry(entry, opts);
+        }
+    }
+
+    void processLogEntry(const LogParser::LogEntry& entry, const Options& opts) {
+        // Apply filters
+        if (!passesFilters(entry, opts)) {
+            return;
+        }
+
+        // Format output
+        outputLogEntry(entry, opts);
+    }
+
+    bool passesFilters(const LogParser::LogEntry& entry, const Options& opts) {
+        // Log level filter
+        if (!opts.log_levels.empty() && 
+            std::find(opts.log_levels.begin(), opts.log_levels.end(), entry.level) == opts.log_levels.end()) {
+            return false;
+        }
+        
+        if (!opts.exclude_log_levels.empty() && 
+            std::find(opts.exclude_log_levels.begin(), opts.exclude_log_levels.end(), entry.level) != opts.exclude_log_levels.end()) {
+            return false;
+        }
+
+        // Time filter
+        if (!opts.since.empty() || !opts.until.empty()) {
+            // TODO: Implement time filtering
+        }
+
+        // Grep filter
+        if (!opts.grep_pattern.empty()) {
+            std::regex pattern(opts.grep_pattern, 
+                opts.grep_case_sensitive ? std::regex::ECMAScript : std::regex::icase);
+            if (!std::regex_search(entry.message, pattern)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void outputLogEntry(const LogParser::LogEntry& entry, const Options& opts) {
+        switch (opts.output_format) {
+            case OutputFormat::LOGFMT:
+                outputLogfmt(entry, opts);
+                break;
+            case OutputFormat::JSONL:
+                outputJsonl(entry, opts);
+                break;
+            case OutputFormat::JSON:
+                outputJson(entry, opts);
+                break;
+            case OutputFormat::CSV:
+                outputCsv(entry, opts);
+                break;
+            case OutputFormat::TSV:
+                outputTsv(entry, opts);
+                break;
+            case OutputFormat::PSV:
+                outputPsv(entry, opts);
+                break;
+        }
+    }
+
+    void outputLogfmt(const LogParser::LogEntry& entry, const Options& opts) {
+        std::stringstream ss;
+        
+        // Only output requested keys
+        if (!opts.keys.empty()) {
+            for (const auto& key : opts.keys) {
+                if (key == "timestamp") ss << "timestamp=" << entry.timestamp << " ";
+                else if (key == "level") ss << "level=" << entry.level << " ";
+                else if (key == "message") ss << "message=" << entry.message << " ";
+                else if (entry.fields.count(key)) ss << key << "=" << entry.fields.at(key) << " ";
+            }
+        } else {
+            ss << "timestamp=" << entry.timestamp << " ";
+            ss << "level=" << entry.level << " ";
+            ss << "message=" << entry.message;
+            for (const auto& [key, value] : entry.fields) {
+                if (opts.exclude_keys.empty() || 
+                    std::find(opts.exclude_keys.begin(), opts.exclude_keys.end(), key) == opts.exclude_keys.end()) {
+                    ss << " " << key << "=" << value;
+                }
+            }
+        }
+
+        if (opts.color) {
+            // Add color based on log level
+            if (entry.level == "ERROR" || entry.level == "FATAL") {
+                std::cout << "\033[1;31m" << ss.str() << "\033[0m" << std::endl;
+            } else if (entry.level == "WARN" || entry.level == "WARNING") {
+                std::cout << "\033[1;33m" << ss.str() << "\033[0m" << std::endl;
+            } else {
+                std::cout << ss.str() << std::endl;
+            }
+        } else {
+            std::cout << ss.str() << std::endl;
+        }
+    }
+
+    void outputJsonl(const LogParser::LogEntry& entry, const Options& opts) {
+        json j;
+        
+        if (opts.keys.empty()) {
+            j["timestamp"] = entry.timestamp;
+            j["level"] = entry.level;
+            j["message"] = entry.message;
+            for (const auto& [key, value] : entry.fields) {
+                if (opts.exclude_keys.empty() || 
+                    std::find(opts.exclude_keys.begin(), opts.exclude_keys.end(), key) == opts.exclude_keys.end()) {
+                    j[key] = value;
+                }
+            }
+        } else {
+            for (const auto& key : opts.keys) {
+                if (key == "timestamp") j["timestamp"] = entry.timestamp;
+                else if (key == "level") j["level"] = entry.level;
+                else if (key == "message") j["message"] = entry.message;
+                else if (entry.fields.count(key)) j[key] = entry.fields.at(key);
+            }
+        }
+
+        std::cout << j.dump() << std::endl;
+    }
+
+    void outputJson(const LogParser::LogEntry& entry, const Options& opts) {
+        // TODO: Implement JSON output (array of entries)
+    }
+
+    void outputCsv(const LogParser::LogEntry& entry, const Options& opts) {
+        // TODO: Implement CSV output
+    }
+
+    void outputTsv(const LogParser::LogEntry& entry, const Options& opts) {
+        // TODO: Implement TSV output
+    }
+
+    void outputPsv(const LogParser::LogEntry& entry, const Options& opts) {
+        // TODO: Implement PSV output
+    }
+
+    void showStats(const std::vector<LogParser::LogEntry>& entries, const Options& opts) {
+        std::cout << "\nLog Statistics:" << std::endl;
+        std::cout << "---------------" << std::endl;
+        std::cout << "Total entries: " << entries.size() << std::endl;
+
+        // Time span
+        if (!entries.empty()) {
+            std::cout << "\nTime span: " << entries.front().timestamp 
+                     << " to " << entries.back().timestamp << std::endl;
+        }
+
+        // Log levels distribution
+        std::unordered_map<std::string, size_t> level_counts;
+        for (const auto& entry : entries) {
+            level_counts[entry.level]++;
+        }
+
+        std::cout << "\nLog levels:" << std::endl;
+        for (const auto& [level, count] : level_counts) {
+            std::cout << "  " << level << ": " << count << std::endl;
+        }
+
+        // Fields found
+        std::set<std::string> unique_fields;
+        for (const auto& entry : entries) {
+            for (const auto& [key, _] : entry.fields) {
+                unique_fields.insert(key);
+            }
+        }
+
+        std::cout << "\nFields found:" << std::endl;
+        for (const auto& field : unique_fields) {
+            std::cout << "  " << field << std::endl;
+        }
+    }
+
+    std::string formatToString(InputFormat format) {
+        switch (format) {
+            case InputFormat::LOGFMT: return "logfmt";
+            case InputFormat::JSONL: return "jsonl";
+            case InputFormat::JSON: return "json";
+            case InputFormat::CSV: return "csv";
+            case InputFormat::LINE: return "line";
+            case InputFormat::SYSLOG: return "syslog";
+            case InputFormat::LOG4J: return "log4j";
+            case InputFormat::CEF: return "cef";
+            case InputFormat::UNIX: return "unix";
+            case InputFormat::RFC5424: return "rfc5424";
+            default: return "logfmt";
+        }
+    }
 };
 
 int main(int argc, char* argv[]) {
     cxxopts::Options options("logai", "AI-powered log analysis tool");
     
     options.add_options()
-        ("p,parse", "Parse a log file", cxxopts::value<std::string>())
-        ("s,search", "Search logs semantically", cxxopts::value<std::string>())
-        ("a,analyze", "Analyze log patterns", cxxopts::value<std::string>())
-        ("d,detect", "Detect anomalies", cxxopts::value<std::string>())
-        ("h,help", "Print usage");
+        ("f,format", "Input format (logfmt,jsonl,json,csv,line,syslog,log4j,cef)", cxxopts::value<std::string>()->default_value("logfmt"))
+        ("F,output-format", "Output format (logfmt,jsonl,json,csv,tsv,psv)", cxxopts::value<std::string>()->default_value("logfmt"))
+        ("k,keys", "Only show specific keys", cxxopts::value<std::vector<std::string>>())
+        ("K,keys-not", "Exclude specific keys", cxxopts::value<std::vector<std::string>>())
+        ("l,loglevels", "Filter by log levels", cxxopts::value<std::vector<std::string>>())
+        ("L,not-loglevels", "Exclude log levels", cxxopts::value<std::vector<std::string>>())
+        ("since", "Show logs since timestamp/duration", cxxopts::value<std::string>())
+        ("until", "Show logs until timestamp/duration", cxxopts::value<std::string>())
+        ("g,grep", "Filter logs by regex pattern", cxxopts::value<std::string>())
+        ("i,ignore-case", "Case insensitive grep", cxxopts::value<bool>()->default_value("false"))
+        ("n,follow", "Follow log file (like tail -f)", cxxopts::value<bool>()->default_value("false"))
+        ("S,stats-only", "Only show statistics", cxxopts::value<bool>()->default_value("false"))
+        ("no-color", "Disable color output", cxxopts::value<bool>()->default_value("false"))
+        ("input-encoding", "Input file encoding", cxxopts::value<std::string>()->default_value("utf-8"))
+        ("input-delimiter", "Input field delimiter for CSV/TSV", cxxopts::value<std::string>()->default_value(","))
+        ("no-header", "Input has no header row", cxxopts::value<bool>()->default_value("false"))
+        ("logical-lines", "Handle multi-line logs", cxxopts::value<bool>()->default_value("false"))
+        ("h,help", "Print usage")
+        ("input", "Input file", cxxopts::value<std::string>());
+
+    options.parse_positional({"input"});
+    options.positional_help("[input]");
 
     auto result = options.parse(argc, argv);
 
@@ -190,25 +329,86 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    LogAI logai;
+    if (!result.count("input")) {
+        std::cerr << "Error: Input file required" << std::endl;
+        return 1;
+    }
 
-    try {
-        if (result.count("parse")) {
-            logai.parse(result["parse"].as<std::string>());
-        }
-        else if (result.count("search")) {
-            logai.search(result["search"].as<std::string>(), "");
-        }
-        else if (result.count("analyze")) {
-            logai.analyze(result["analyze"].as<std::string>());
-        }
-        else if (result.count("detect")) {
-            logai.detectAnomalies(result["detect"].as<std::string>());
-        }
+    LogAI logai;
+    LogAI::Options opts;
+
+    // Parse command line options into LogAI options
+    if (result.count("format")) {
+        std::string fmt = result["format"].as<std::string>();
+        if (fmt == "logfmt") opts.input_format = LogAI::InputFormat::LOGFMT;
+        else if (fmt == "jsonl") opts.input_format = LogAI::InputFormat::JSONL;
+        else if (fmt == "json") opts.input_format = LogAI::InputFormat::JSON;
+        else if (fmt == "csv") opts.input_format = LogAI::InputFormat::CSV;
+        else if (fmt == "line") opts.input_format = LogAI::InputFormat::LINE;
+        else if (fmt == "syslog") opts.input_format = LogAI::InputFormat::SYSLOG;
+        else if (fmt == "log4j") opts.input_format = LogAI::InputFormat::LOG4J;
+        else if (fmt == "cef") opts.input_format = LogAI::InputFormat::CEF;
+        else if (fmt == "unix") opts.input_format = LogAI::InputFormat::UNIX;
+        else if (fmt == "rfc5424") opts.input_format = LogAI::InputFormat::RFC5424;
         else {
-            std::cout << "Please specify a command. Use --help for usage information." << std::endl;
+            std::cerr << "Error: Unsupported input format: " << fmt << std::endl;
             return 1;
         }
+    }
+    
+    if (result.count("output-format")) {
+        std::string fmt = result["output-format"].as<std::string>();
+        if (fmt == "logfmt") opts.output_format = LogAI::OutputFormat::LOGFMT;
+        else if (fmt == "jsonl") opts.output_format = LogAI::OutputFormat::JSONL;
+        else if (fmt == "json") opts.output_format = LogAI::OutputFormat::JSON;
+        else if (fmt == "csv") opts.output_format = LogAI::OutputFormat::CSV;
+        else if (fmt == "tsv") opts.output_format = LogAI::OutputFormat::TSV;
+        else if (fmt == "psv") opts.output_format = LogAI::OutputFormat::PSV;
+        else {
+            std::cerr << "Error: Unsupported output format: " << fmt << std::endl;
+            return 1;
+        }
+    }
+
+    if (result.count("keys")) {
+        opts.keys = result["keys"].as<std::vector<std::string>>();
+    }
+
+    if (result.count("keys-not")) {
+        opts.exclude_keys = result["keys-not"].as<std::vector<std::string>>();
+    }
+
+    if (result.count("loglevels")) {
+        opts.log_levels = result["loglevels"].as<std::vector<std::string>>();
+    }
+
+    if (result.count("not-loglevels")) {
+        opts.exclude_log_levels = result["not-loglevels"].as<std::vector<std::string>>();
+    }
+
+    if (result.count("since")) {
+        opts.since = result["since"].as<std::string>();
+    }
+
+    if (result.count("until")) {
+        opts.until = result["until"].as<std::string>();
+    }
+
+    if (result.count("grep")) {
+        opts.grep_pattern = result["grep"].as<std::string>();
+        opts.grep_case_sensitive = !result["ignore-case"].as<bool>();
+    }
+
+    opts.follow = result["follow"].as<bool>();
+    opts.stats_only = result["stats-only"].as<bool>();
+    opts.color = !result["no-color"].as<bool>();
+    opts.input_encoding = result["input-encoding"].as<std::string>();
+    opts.input_delimiter = result["input-delimiter"].as<std::string>();
+    opts.no_header = result["no-header"].as<bool>();
+    opts.logical_lines = result["logical-lines"].as<bool>();
+
+    try {
+        logai.process(result["input"].as<std::string>(), opts);
     }
     catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

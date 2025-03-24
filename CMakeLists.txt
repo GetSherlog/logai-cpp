@@ -41,6 +41,16 @@ find_package(Arrow REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Folly REQUIRED)
 find_package(llama REQUIRED)
+find_package(Boost REQUIRED COMPONENTS iostreams)
+find_package(ZLIB REQUIRED)
+find_package(BZip2 REQUIRED)
+
+# Add nlohmann/json
+include(FetchContent)
+FetchContent_Declare(json
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+)
+FetchContent_MakeAvailable(json)
 
 # Add source files
 set(SOURCES
@@ -101,11 +111,17 @@ target_link_libraries(logai PRIVATE
     Eigen3::Eigen
     Folly::folly
     llama::llama
+    ${Boost_LIBRARIES}
+    ZLIB::ZLIB
+    BZip2::BZip2
 )
 
 # Include directories
 target_include_directories(logai PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${Boost_INCLUDE_DIRS}
+    ${ZLIB_INCLUDE_DIRS}
+    ${BZIP2_INCLUDE_DIRS}
 )
 
 # Add compiler warnings and optimizations

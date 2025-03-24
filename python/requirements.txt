@@ -1,0 +1,20 @@
+# Core dependencies
+instructor>=0.5.0
+openai>=1.0.0
+pydantic>=2.0.0
+
+# CLI interface
+rich>=13.0.0
+
+# Interface with C++ code
+pybind11>=2.10.0
+
+# Database interfaces
+duckdb>=0.10.0
+pymilvus>=2.3.0
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+numpy>=1.24.0
+pandas>=2.0.0 

@@ -48,6 +48,14 @@
 #include <sys/mman.h>   // For mmap, munmap, PROT_READ, MAP_PRIVATE, MAP_FAILED
 #include <sys/stat.h>   // For stat
 #include <unistd.h>     // For close
+#include <regex>
+#include <zlib.h>
+#include <boost/algorithm/string.hpp>
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <boost/iostreams/copy.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filter/bzip2.hpp>
+#include <boost/iostreams/filter/zlib.hpp>
 
 // Define namespace aliases to avoid conflicts
 namespace fs = std::filesystem;
@@ -78,12 +86,237 @@ constexpr char SPAN_ID[] = "span_id";
 constexpr char LOG_TIMESTAMPS[] = "timestamp";
 constexpr char LABELS[] = "labels";
 
-FileDataLoader::FileDataLoader(const DataLoaderConfig& config)
-    : config_(config) {
+FileDataLoader::FileDataLoader(const std::string& filepath, const FileDataLoaderConfig& config)
+    : filepath_(filepath), config_(config) {
+    initInputStream();
+    initParser();
 }
 
-FileDataLoader::~FileDataLoader() {
-    // Empty destructor
+void FileDataLoader::initInputStream() {
+    if (config_.decompress || isCompressedFile()) {
+        input_stream_ = openCompressedFile();
+    } else {
+        input_stream_ = std::make_unique<std::ifstream>(filepath_, std::ios::binary);
+    }
+
+    if (!input_stream_ || !input_stream_->good()) {
+        throw std::runtime_error("Failed to open file: " + filepath_);
+    }
+
+    validateEncoding();
+}
+
+void FileDataLoader::initParser() {
+    parser_ = LogParserFactory::create(config_.format);
+}
+
+void FileDataLoader::setFormat(const std::string& format) {
+    config_.format = format;
+    initParser();
+}
+
+std::unique_ptr<std::istream> FileDataLoader::openCompressedFile() {
+    namespace bio = boost::iostreams;
+    
+    auto file = std::make_unique<std::ifstream>(filepath_, std::ios::binary);
+    if (!file || !file->good()) {
+        throw std::runtime_error("Failed to open compressed file: " + filepath_);
+    }
+
+    auto ext = getFileExtension();
+    auto buffer = std::make_unique<bio::filtering_streambuf<bio::input>>();
+
+    if (ext == "gz" || ext == "gzip") {
+        buffer->push(bio::gzip_decompressor());
+    } else if (ext == "bz2") {
+        buffer->push(bio::bzip2_decompressor());
+    } else if (ext == "z") {
+        buffer->push(bio::zlib_decompressor());
+    } else {
+        throw std::runtime_error("Unsupported compression format: " + ext);
+    }
+
+    buffer->push(*file);
+    return std::make_unique<std::istream>(buffer.release());
+}
+
+void FileDataLoader::loadData(std::vector<LogParser::LogEntry>& entries) {
+    entries.clear();
+    std::string line;
+
+    // Skip header if needed
+    if (config_.has_header) {
+        std::getline(*input_stream_, line);
+    }
+
+    while (input_stream_->good()) {
+        if (config_.logical_lines) {
+            auto logical_line = readLogicalLine();
+            if (!logical_line.empty()) {
+                if (parser_->validate(logical_line)) {
+                    entries.push_back(parser_->parse(logical_line));
+                }
+            }
+        } else {
+            if (std::getline(*input_stream_, line)) {
+                boost::trim(line);
+                if (!line.empty() && parser_->validate(line)) {
+                    entries.push_back(parser_->parse(line));
+                }
+            }
+        }
+    }
+}
+
+void FileDataLoader::streamData(const std::function<bool(const LogParser::LogEntry&)>& callback) {
+    std::string line;
+
+    // Skip header if needed
+    if (config_.has_header) {
+        std::getline(*input_stream_, line);
+    }
+
+    while (input_stream_->good()) {
+        if (config_.logical_lines) {
+            auto logical_line = readLogicalLine();
+            if (!logical_line.empty() && parser_->validate(logical_line)) {
+                if (!callback(parser_->parse(logical_line))) {
+                    break;
+                }
+            }
+        } else {
+            if (std::getline(*input_stream_, line)) {
+                boost::trim(line);
+                if (!line.empty() && parser_->validate(line)) {
+                    if (!callback(parser_->parse(line))) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void FileDataLoader::processInChunks(size_t chunk_size, 
+    const std::function<void(const std::vector<LogParser::LogEntry>&)>& callback) {
+    
+    std::vector<LogParser::LogEntry> chunk;
+    chunk.reserve(chunk_size);
+    std::string line;
+
+    // Skip header if needed
+    if (config_.has_header) {
+        std::getline(*input_stream_, line);
+    }
+
+    while (input_stream_->good()) {
+        if (config_.logical_lines) {
+            auto logical_line = readLogicalLine();
+            if (!logical_line.empty() && parser_->validate(logical_line)) {
+                chunk.push_back(parser_->parse(logical_line));
+                if (chunk.size() >= chunk_size) {
+                    callback(chunk);
+                    chunk.clear();
+                    chunk.reserve(chunk_size);
+                }
+            }
+        } else {
+            if (std::getline(*input_stream_, line)) {
+                boost::trim(line);
+                if (!line.empty() && parser_->validate(line)) {
+                    chunk.push_back(parser_->parse(line));
+                    if (chunk.size() >= chunk_size) {
+                        callback(chunk);
+                        chunk.clear();
+                        chunk.reserve(chunk_size);
+                    }
+                }
+            }
+        }
+    }
+
+    // Process remaining entries
+    if (!chunk.empty()) {
+        callback(chunk);
+    }
+}
+
+std::string FileDataLoader::readLogicalLine() {
+    std::string current_line;
+    std::string line;
+
+    // Read first line
+    if (!std::getline(*input_stream_, line)) {
+        return "";
+    }
+
+    boost::trim(line);
+    if (line.empty()) {
+        return "";
+    }
+
+    current_line = line;
+
+    // Keep reading while we see continuation markers
+    while (input_stream_->good() && isLogicalLineContinuation(line)) {
+        if (!std::getline(*input_stream_, line)) {
+            break;
+        }
+
+        if (line.empty()) {
+            break;
+        }
+
+        // Handle different continuation styles
+        if (boost::starts_with(line, " ") || boost::starts_with(line, "\t")) {
+            current_line = handleIndentationContinuation(line, current_line);
+        } else if (boost::ends_with(current_line, "\\")) {
+            current_line = handleBackslashContinuation(line, current_line);
+        }
+    }
+
+    return current_line;
+}
+
+bool FileDataLoader::isLogicalLineContinuation(const std::string& line) {
+    return boost::ends_with(line, "\\") || 
+           (input_stream_->good() && 
+            std::streampos(input_stream_->tellg()) < std::streampos(input_stream_->seekg(0, std::ios::end).tellg()) &&
+            (boost::starts_with(line, " ") || boost::starts_with(line, "\t")));
+}
+
+std::string FileDataLoader::handleIndentationContinuation(const std::string& line, std::string& current_line) {
+    std::string trimmed_line = line;
+    boost::trim_left(trimmed_line);
+    return current_line + " " + trimmed_line;
+}
+
+std::string FileDataLoader::handleBackslashContinuation(const std::string& line, std::string& current_line) {
+    // Remove backslash and join with next line
+    current_line.pop_back();  // Remove backslash
+    boost::trim(current_line);
+    return current_line + line;
+}
+
+bool FileDataLoader::isCompressedFile() const {
+    auto ext = getFileExtension();
+    return ext == "gz" || ext == "gzip" || ext == "bz2" || ext == "z";
+}
+
+std::string FileDataLoader::getFileExtension() const {
+    auto pos = filepath_.find_last_of('.');
+    if (pos != std::string::npos) {
+        return filepath_.substr(pos + 1);
+    }
+    return "";
+}
+
+void FileDataLoader::validateEncoding() const {
+    // TODO: Implement encoding validation and conversion if needed
+    // For now, we only support UTF-8 and ASCII
+    if (config_.encoding != "utf-8" && config_.encoding != "ascii") {
+        throw std::runtime_error("Unsupported encoding: " + config_.encoding);
+    }
 }
 
 std::vector<LogRecordObject> FileDataLoader::load_data() {

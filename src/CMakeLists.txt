@@ -15,7 +15,18 @@ list(FILTER SOURCES EXCLUDE REGEX "one_class_svm_test\\.cpp$")
 file(GLOB HEADERS "*.h")
 
 # Create library
-add_library(logai ${SOURCES} ${HEADERS})
+add_library(logai
+    logai.cpp
+    file_data_loader.cpp
+    file_data_loader.h
+    log_parser.h
+    logfmt_parser.cpp
+    jsonl_parser.cpp
+    syslog_parser.cpp
+    log4j_parser.cpp
+    cef_parser.cpp
+    line_parser.cpp
+)
 target_include_directories(logai PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Find abseil-cpp package
@@ -249,6 +260,13 @@ if(NOT DEFINED DISABLE_SIMD OR NOT DISABLE_SIMD)
 else()
     message(STATUS "SIMD optimizations DISABLED")
 endif() # Fixed trailing endif
+
+# Add pybind11
+find_package(pybind11 REQUIRED)
+
+# Python bindings
+pybind11_add_module(logai_cpp python_bindings.cpp)
+target_link_libraries(logai_cpp PRIVATE ${DEPENDENCIES})
 
 # Install
 if(HAVE_NEON_SIMD_TEST)

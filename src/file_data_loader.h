@@ -27,6 +27,20 @@ namespace arrow {
 namespace logai {
 
 /**
+ * @brief Configuration for file data loader
+ */
+struct FileDataLoaderConfig {
+    std::string encoding = "utf-8";
+    std::string delimiter = ",";
+    bool has_header = true;
+    bool logical_lines = false;
+    bool decompress = false;
+    size_t buffer_size = 8192;
+    size_t max_line_length = 1024 * 1024;  // 1MB
+    std::string format = "logfmt";  // Default format
+};
+
+/**
  * @brief Batch of log lines for parallel processing
  */
 struct LogBatch {
@@ -47,8 +61,27 @@ struct ProcessedBatch {
  */
 class FileDataLoader {
 public:
-    explicit FileDataLoader(const DataLoaderConfig& config);
-    ~FileDataLoader();
+    explicit FileDataLoader(const std::string& filepath, const FileDataLoaderConfig& config = FileDataLoaderConfig());
+
+    // Configuration setters
+    void setEncoding(const std::string& encoding) { config_.encoding = encoding; }
+    void setDelimiter(const std::string& delimiter) { config_.delimiter = delimiter; }
+    void setHasHeader(bool has_header) { config_.has_header = has_header; }
+    void setLogicalLines(bool logical_lines) { config_.logical_lines = logical_lines; }
+    void setDecompress(bool decompress) { config_.decompress = decompress; }
+    void setBufferSize(size_t buffer_size) { config_.buffer_size = buffer_size; }
+    void setMaxLineLength(size_t max_line_length) { config_.max_line_length = max_line_length; }
+    void setFormat(const std::string& format);
+
+    // Load all data at once
+    void loadData(std::vector<LogParser::LogEntry>& entries);
+
+    // Stream data line by line
+    void streamData(const std::function<bool(const LogParser::LogEntry&)>& callback);
+
+    // Process data in chunks
+    void processInChunks(size_t chunk_size, 
+        const std::function<void(const std::vector<LogParser::LogEntry>&)>& callback);
 
     std::vector<LogRecordObject> load_data();
     double get_progress() const;
@@ -109,6 +142,31 @@ public:
                                                   bool force_chunking = false);
 
 private:
+    std::string filepath_;
+    FileDataLoaderConfig config_;
+    std::unique_ptr<std::istream> input_stream_;
+    std::unique_ptr<LogParser> parser_;
+
+    // Initialize input stream based on file type
+    void initInputStream();
+
+    // Initialize parser based on format
+    void initParser();
+
+    // Handle compressed files
+    std::unique_ptr<std::istream> openCompressedFile();
+
+    // Handle logical lines
+    std::string readLogicalLine();
+    bool isLogicalLineContinuation(const std::string& line);
+    std::string handleIndentationContinuation(const std::string& line, std::string& current_line);
+    std::string handleBackslashContinuation(const std::string& line, std::string& current_line);
+
+    // Utility functions
+    bool isCompressedFile() const;
+    std::string getFileExtension() const;
+    void validateEncoding() const;
+
     DataLoaderConfig config_;
     std::atomic<size_t> total_lines_read_{0};
     std::atomic<size_t> processed_lines_{0};
