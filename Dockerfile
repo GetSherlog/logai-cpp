@@ -15,17 +15,6 @@ RUN apt-get update && apt-get install -y \
     libtbb-dev libhiredis-dev libspdlog-dev libfmt-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Apache Arrow
-WORKDIR /tmp/arrow
-RUN wget -q https://github.com/apache/arrow/archive/refs/tags/apache-arrow-12.0.0.tar.gz \
-    && tar -xf apache-arrow-12.0.0.tar.gz \
-    && cd arrow-apache-arrow-12.0.0/cpp \
-    && mkdir build && cd build \
-    && cmake -DARROW_PARQUET=ON -DARROW_DATASET=ON -DARROW_CSV=ON .. \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig
-
 # Install Eigen
 WORKDIR /tmp/eigen
 RUN wget -q https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz \
@@ -107,7 +96,6 @@ RUN echo 'find_package(pybind11 REQUIRED)' >> CMakeLists.txt && \
     echo 'target_link_libraries(logai_cpp PRIVATE' >> CMakeLists.txt && \
     echo '    nlohmann_json::nlohmann_json' >> CMakeLists.txt && \
     echo '    spdlog::spdlog' >> CMakeLists.txt && \
-    echo '    PkgConfig::ARROW' >> CMakeLists.txt && \
     echo '    Eigen3::Eigen' >> CMakeLists.txt && \
     echo '    Folly::folly' >> CMakeLists.txt && \
     echo '    ${Boost_LIBRARIES}' >> CMakeLists.txt && \

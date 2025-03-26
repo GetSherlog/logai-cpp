@@ -9,8 +9,7 @@
 #include <filesystem>
 #include <unordered_set>
 #include <optional>
-#include <arrow/api.h>
-#include <arrow/status.h>
+#include <duckdb.hpp>
 #include "data_loader_config.h"
 #include "log_record.h"
 #include "memory_mapped_file.h"
@@ -18,26 +17,26 @@
 #include "log_parser.h"
 #include "preprocessor.h"
 
-// Forward declaration for Arrow Table
-namespace arrow {
-    class Table;
-    class Status;
-}
-
 namespace logai {
 
 /**
  * @brief Configuration for file data loader
  */
 struct FileDataLoaderConfig {
+    std::string file_path;
     std::string encoding = "utf-8";
     std::string delimiter = ",";
     bool has_header = true;
     bool logical_lines = false;
     bool decompress = false;
+    bool enable_preprocessing = false;
     size_t buffer_size = 8192;
     size_t max_line_length = 1024 * 1024;  // 1MB
     std::string format = "logfmt";  // Default format
+    std::string log_type = "csv";
+    std::string log_pattern = "";
+    size_t num_threads = 0;
+    bool use_memory_mapping = true;
 };
 
 /**
@@ -72,6 +71,7 @@ public:
     void setBufferSize(size_t buffer_size) { config_.buffer_size = buffer_size; }
     void setMaxLineLength(size_t max_line_length) { config_.max_line_length = max_line_length; }
     void setFormat(const std::string& format);
+    void setEnablePreprocessing(bool enable) { config_.enable_preprocessing = enable; }
 
     // Load all data at once
     void loadData(std::vector<LogParser::LogEntry>& entries);
@@ -86,14 +86,27 @@ public:
     std::vector<LogRecordObject> load_data();
     double get_progress() const;
     
-    // New Arrow-based operations
-    std::shared_ptr<arrow::Table> log_to_dataframe(const std::string& filepath, const std::string& format);
-    std::shared_ptr<arrow::Table> filter_dataframe(std::shared_ptr<arrow::Table> table, const std::vector<std::string>& dimensions);
-    std::shared_ptr<arrow::Table> filter_dataframe(std::shared_ptr<arrow::Table> table, 
-                                                  const std::string& column, 
-                                                  const std::string& op, 
-                                                  const std::string& value);
-    arrow::Status write_to_parquet(std::shared_ptr<arrow::Table> table, const std::string& output_path);
+    // DuckDB-based operations
+    bool log_to_duckdb_table(const std::string& filepath, 
+                             const std::string& format, 
+                             duckdb::Connection& conn, 
+                             const std::string& table_name);
+                             
+    bool filter_duckdb_table(duckdb::Connection& conn, 
+                             const std::string& input_table, 
+                             const std::string& output_table,
+                             const std::vector<std::string>& dimensions);
+                             
+    bool filter_duckdb_table(duckdb::Connection& conn, 
+                             const std::string& input_table, 
+                             const std::string& output_table,
+                             const std::string& column, 
+                             const std::string& op, 
+                             const std::string& value);
+                             
+    bool export_to_csv(duckdb::Connection& conn, 
+                       const std::string& table_name, 
+                       const std::string& output_path);
 
     /**
      * @brief Apply preprocessing to a batch of log lines
@@ -108,19 +121,15 @@ public:
      * 
      * @param log_lines The preprocessed log lines
      * @param patterns Map of attribute names to regex patterns
-     * @return Table with extracted attributes
+     * @param conn DuckDB connection to store the results
+     * @param table_name Name of the output table
+     * @return True if extraction succeeded, false otherwise
      */
-    std::shared_ptr<arrow::Table> extract_attributes(
+    bool extract_attributes(
         const std::vector<std::string>& log_lines,
-        const std::unordered_map<std::string, std::string>& patterns);
-
-    /**
-     * @brief Create a unified schema from multiple Arrow tables
-     * @param tables The vector of Arrow tables to unify
-     * @return A vector of tables with unified schemas ready for concatenation
-     */
-    std::vector<std::shared_ptr<arrow::Table>> unify_table_schemas(
-        const std::vector<std::shared_ptr<arrow::Table>>& tables);
+        const std::unordered_map<std::string, std::string>& patterns,
+        duckdb::Connection& conn,
+        const std::string& table_name);
 
     // Process a single batch of log lines
     void process_batch(const LogBatch& batch, ProcessedBatch& result);
@@ -130,16 +139,20 @@ public:
      * 
      * @param input_file The path to the input log file
      * @param parser_type The type of parser to use (drain, json, csv, regex)
+     * @param conn DuckDB connection to store the results
+     * @param table_name Name of the output table
      * @param memory_limit_mb Maximum memory limit in megabytes
      * @param chunk_size Initial chunk size (number of lines per batch)
      * @param force_chunking Force processing in chunks even if file is small
-     * @return std::shared_ptr<arrow::Table> The final Arrow table with parsed results
+     * @return True if processing succeeded, false otherwise
      */
-    std::shared_ptr<arrow::Table> process_large_file(const std::string& input_file,
-                                                  const std::string& parser_type,
-                                                  size_t memory_limit_mb = 2000,
-                                                  size_t chunk_size = 10000,
-                                                  bool force_chunking = false);
+    bool process_large_file(const std::string& input_file,
+                           const std::string& parser_type,
+                           duckdb::Connection& conn,
+                           const std::string& table_name,
+                           size_t memory_limit_mb = 2000,
+                           size_t chunk_size = 10000,
+                           bool force_chunking = false);
 
 private:
     std::string filepath_;
@@ -167,7 +180,6 @@ private:
     std::string getFileExtension() const;
     void validateEncoding() const;
 
-    DataLoaderConfig config_;
     std::atomic<size_t> total_lines_read_{0};
     std::atomic<size_t> processed_lines_{0};
     std::atomic<size_t> failed_lines_{0};
@@ -230,8 +242,12 @@ private:
     bool detect_memory_pressure() const;
     void process_in_chunks(const std::string& filepath, size_t chunk_size, const std::string& output_dir);
     
+    // Helper method to create a table in DuckDB from log records
+    bool create_table_from_records(const std::vector<LogRecordObject>& records,
+                                  duckdb::Connection& conn,
+                                  const std::string& table_name);
+    
     // Initialize preprocessor if needed
     void init_preprocessor();
-};
-
-} 
+}; 
+}

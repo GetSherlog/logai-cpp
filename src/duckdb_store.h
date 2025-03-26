@@ -29,6 +29,8 @@ public:
     // Get schema for a template table
     std::vector<std::pair<std::string, std::string>> get_schema(const std::string& template_id);
 
+    std::string get_db_path() const;
+
 private:
     // Thread-safe database connection
     folly::Synchronized<std::unique_ptr<duckdb::DuckDB>> db_;
@@ -42,6 +44,8 @@ private:
     
     // Helper methods
     std::string build_insert_stmt(const std::string& table_name, const LogRecordObject& record);
+
+    std::string m_db_path;
 };
 
 } // namespace logai 

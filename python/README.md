@@ -1,6 +1,104 @@
-# LogAI Agent
+# LogAI Python Module
 
-An AI-powered agent for advanced log analysis, combining C++ performance with the flexibility of Python and the intelligence of LLMs.
+This Python module provides a high-level interface to the LogAI C++ library.
+
+## Architecture
+
+The LogAI Python module is designed as a direct interface to the high-performance C++ components:
+
+1. **C++ Core**: 
+   - Fast log parsing with customizable parsers
+   - Template extraction using the Drain algorithm
+   - High-performance data storage and querying with DuckDB
+   - Vector embeddings and clustering capabilities
+
+2. **Python Interface**:
+   - Direct binding to the C++ library using pybind11
+   - Data manipulation with pandas integration
+   - AI-powered analysis capabilities
+   - CLI for interactive log analysis
+
+## Components
+
+- **DuckDB Store**: Efficient SQL-based storage and querying of log data
+- **Drain Parser**: Extract log templates from raw logs
+- **Template Store**: Manage and search log templates
+- **Vector Embeddings**: Generate and manage embeddings for logs
+- **Clustering**: Find patterns in log data
+
+## Getting Started
+
+```python
+import logai_cpp
+
+# Initialize components
+parser = logai_cpp.DrainParser()
+template_store = logai_cpp.TemplateStore()
+duckdb_store = logai_cpp.DuckDBStore()
+
+# Parse a log file
+parsed_logs = parser.parse_file("path/to/logs.log")
+
+# Extract templates
+for log in parsed_logs:
+    template_id = log["template_id"]
+    template_str = log["template"]
+    template_store.add_template(template_id, template_str, log)
+
+# Create a table in DuckDB for efficient querying
+columns = ["timestamp", "level", "component", "message"]
+types = ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR"]
+duckdb_store.init_template_table("template1", columns, types)
+
+# Query logs
+results = duckdb_store.execute_query("SELECT * FROM template1 WHERE level = 'ERROR'")
+
+# Convert to pandas DataFrame for analysis
+import pandas as pd
+df = pd.DataFrame(results[1:], columns=results[0])
+```
+
+## Using with pandas
+
+```python
+from logai_cpp import DrainParser, DuckDBStore
+import pandas as pd
+
+# Initialize LogAI components
+parser = DrainParser()
+store = DuckDBStore()
+
+# Parse logs
+parsed_logs = parser.parse_file("logs.log")
+
+# Set up DuckDB table
+columns = ["timestamp", "level", "message"]
+types = ["VARCHAR", "VARCHAR", "VARCHAR"]
+store.init_template_table("logs", columns, types)
+
+# Execute a query and convert to pandas DataFrame
+query = "SELECT * FROM logs WHERE level = 'ERROR'"
+results = store.execute_query(query)
+headers = results[0]
+data = results[1:]
+df = pd.DataFrame(data, columns=headers)
+
+# Now use pandas for further analysis
+print(df.describe())
+```
+
+## Running the CLI
+
+```bash
+# Basic usage
+logai-agent --log-file path/to/logs.log
+
+# Specify log format
+logai-agent --log-file path/to/logs.log --format json
+
+# Run analysis
+logai-agent analyze --log-file path/to/logs.log
+```
 
 ## Features
 

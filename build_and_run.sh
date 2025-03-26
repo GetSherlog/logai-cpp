@@ -24,6 +24,10 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
+# Clean old build artifacts
+echo -e "${BLUE}[0/4] Cleaning old build artifacts...${NC}"
+rm -rf build src/build python/build python/dist python/*.egg-info
+
 # Set Docker image and container names
 IMAGE_NAME="logai-cpp"
 CONTAINER_NAME="logai-cpp-container"

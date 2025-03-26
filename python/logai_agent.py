@@ -30,6 +30,10 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.syntax import Syntax
 
+# Data handling
+import pandas as pd
+import duckdb
+
 # Import the C++ module directly
 try:
     import logai_cpp
@@ -645,6 +649,61 @@ To solve the user's question:
 
 Always be factual and base your answers on the data from the tools.
 """
+
+    def get_duckdb_connection(self):
+        """Get a direct connection to the DuckDB database.
+        
+        Returns:
+            pandas.DataFrame or None: A DataFrame with query results, or None if failed
+        """
+        if not HAS_CPP_MODULE:
+            self.console.print("[bold red]Error: C++ module not available[/bold red]")
+            return None
+            
+        try:
+            # Get the database path from the C++ module
+            db_path = self.duckdb_store.get_db_path()
+            
+            # If it's an in-memory database, we need to use a special connection method
+            if db_path == ":memory:":
+                # We can't directly access the in-memory database from Python
+                # So we'll use the execute_query method from C++
+                self.console.print("[yellow]Using in-memory DuckDB through C++ bindings[/yellow]")
+                return None
+            else:
+                # Connect to the database file
+                return duckdb.connect(db_path)
+        except Exception as e:
+            self.console.print(f"[bold red]Error connecting to DuckDB: {e}[/bold red]")
+            return None
+    
+    def query_to_dataframe(self, query: str) -> Optional[pd.DataFrame]:
+        """Execute a SQL query and return the results as a pandas DataFrame.
+        
+        Args:
+            query: SQL query to execute
+            
+        Returns:
+            pandas.DataFrame or None: A DataFrame with query results, or None if failed
+        """
+        if not HAS_CPP_MODULE:
+            self.console.print("[bold red]Error: C++ module not available[/bold red]")
+            return None
+            
+        try:
+            # Get results through C++ bindings
+            results = self.duckdb_store.execute_query(query)
+            
+            # Convert to DataFrame (first row is headers)
+            if results and len(results) > 0:
+                headers = results[0]
+                data = results[1:] if len(results) > 1 else []
+                return pd.DataFrame(data, columns=headers)
+            else:
+                return pd.DataFrame()
+        except Exception as e:
+            self.console.print(f"[bold red]Error executing query: {e}[/bold red]")
+            return None
 
 def main():
     parser = argparse.ArgumentParser(description="LogAI Agent - AI-powered log analysis")

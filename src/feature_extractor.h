@@ -7,7 +7,7 @@
 #include <memory>
 #include <chrono>
 #include <functional>
-#include <arrow/api.h>
+#include <duckdb.hpp>
 #include "log_record.h"
 
 namespace logai {
@@ -48,7 +48,7 @@ struct FeatureExtractionResult {
     std::vector<size_t> counts;
     
     // Feature vectors for each group (if applicable)
-    std::shared_ptr<arrow::Table> feature_vectors;
+    std::string feature_vectors_table;
     
     // Sequence data for each group (if applicable)
     std::vector<std::string> sequences;
@@ -83,12 +83,16 @@ public:
      * Converts logs to feature vector after grouping
      * 
      * @param logs Vector of log records to process
-     * @param log_vectors Numeric features of logs (output of LogVectorizer)
+     * @param conn DuckDB connection to use
+     * @param log_vectors_table Name of table containing log vectors
+     * @param output_table Name of the output table for feature vectors
      * @return FeatureExtractionResult containing grouped feature vectors
      */
     FeatureExtractionResult convert_to_feature_vector(
         const std::vector<LogRecordObject>& logs,
-        const std::shared_ptr<arrow::Table>& log_vectors);
+        duckdb::Connection& conn,
+        const std::string& log_vectors_table,
+        const std::string& output_table);
     
     /**
      * Converts logs to sequence using sliding window

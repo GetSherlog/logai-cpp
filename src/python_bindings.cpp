@@ -621,6 +621,10 @@ public:
         return py_results;
     }
     
+    std::string get_db_path() {
+        return m_store->get_db_path();
+    }
+    
 private:
     std::unique_ptr<logai::DuckDBStore> m_store;
 };
@@ -1354,5 +1358,6 @@ PYBIND11_MODULE(logai_cpp, m) {
         .def("init_template_table", &PyDuckDBStore::init_template_table, "Initialize a template table",
              py::arg("template_id"), py::arg("columns"), py::arg("types"))
         .def("execute_query", &PyDuckDBStore::execute_query, "Execute a SQL query",
-             py::arg("query"));
+             py::arg("query"))
+        .def("get_db_path", &PyDuckDBStore::get_db_path, "Get the DuckDB database path");
 } 

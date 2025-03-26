@@ -7,9 +7,9 @@
 #include <tuple>
 #include <memory>
 #include <optional>
+#include <duckdb.hpp>
 #include "log_record.h"
 #include "simd_string_ops.h"
-#include <arrow/api.h>
 
 namespace logai {
 
@@ -81,13 +81,17 @@ public:
     /**
      * @brief Group log entries by specified attributes
      * 
-     * @param attributes Arrow table containing log attributes
+     * @param conn DuckDB connection to use
+     * @param table_name Name of the table containing log attributes
      * @param by Vector of column names to group by
-     * @return Arrow table with grouped indices
+     * @param result_table Name of the output table to create with grouped indices
+     * @return True if grouping was successful, false otherwise
      */
-    std::shared_ptr<arrow::Table> group_log_index(
-        std::shared_ptr<arrow::Table> attributes, 
-        const std::vector<std::string>& by
+    bool group_log_index(
+        duckdb::Connection& conn, 
+        const std::string& table_name,
+        const std::vector<std::string>& by,
+        const std::string& result_table
     );
 
 private:

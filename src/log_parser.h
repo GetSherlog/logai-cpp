@@ -19,11 +19,24 @@ public:
         std::string level;
         std::string message;
         std::unordered_map<std::string, std::string> fields;
+
+        LogRecordObject to_record_object() const {
+            LogRecordObject record;
+            for (const auto& [key, value] : fields) {
+                record.fields[key] = value;
+            }
+            return record;
+        }
     };
 
     virtual ~LogParser() = default;
     virtual LogEntry parse(const std::string& line) = 0;
     virtual bool validate(const std::string& line) = 0;
+
+    virtual LogRecordObject parse_line(const std::string& line) {
+        LogEntry entry = parse(line);
+        return entry.to_record_object();
+    }
 };
 
 /**

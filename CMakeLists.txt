@@ -68,12 +68,6 @@ if(NOT nlohmann_json_FOUND)
 endif()
 
 find_package(spdlog REQUIRED)
-
-# Use pkg-config for Arrow
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(ARROW REQUIRED IMPORTED_TARGET arrow)
-pkg_check_modules(PARQUET REQUIRED IMPORTED_TARGET parquet)
-
 find_package(Eigen3 REQUIRED)
 find_package(Folly REQUIRED)
 find_package(Boost REQUIRED COMPONENTS iostreams)
@@ -133,7 +127,6 @@ target_link_libraries(logai PRIVATE
     DuckDB::duckdb
     nlohmann_json::nlohmann_json
     spdlog::spdlog
-    PkgConfig::ARROW
     Eigen3::Eigen
     Folly::folly
     ${Boost_LIBRARIES}
@@ -163,7 +156,6 @@ install(TARGETS logai
 
 # Add pybind11 support
 find_package(pybind11 REQUIRED)
-add_subdirectory(python)
 
 # Print configuration summary
 message(STATUS "Configuration Summary:")
@@ -173,9 +165,6 @@ message(STATUS "  Static linking:    ${BUILD_STATIC}")
 message(STATUS "  Output directory:  ${OUTPUT_DIR}")
 message(STATUS "  CMAKE_CXX_FLAGS:   ${CMAKE_CXX_FLAGS}")
 
-# Enable testing
-enable_testing()
-
 # Print configuration summary
 message(STATUS "")
 message(STATUS "Configuration summary:")
@@ -183,6 +172,5 @@ message(STATUS "  C++ compiler:      ${CMAKE_CXX_COMPILER}")
 message(STATUS "  C++ compiler ID:   ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "  C++ compiler flags:${CMAKE_CXX_FLAGS}")
 message(STATUS "  Install prefix:    ${CMAKE_INSTALL_PREFIX}")
-message(STATUS "  Arrow version:     ${ARROW_VERSION}")
-message(STATUS "  Parquet version:   ${PARQUET_VERSION}")
+message(STATUS "  DuckDB version:    ${DUCKDB_VERSION}")
 message(STATUS "") 

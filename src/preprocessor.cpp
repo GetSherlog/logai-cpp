@@ -5,13 +5,6 @@
 #include <sstream>
 #include <chrono>
 #include <iomanip>
-#include <arrow/api.h>
-#include <arrow/compute/api.h>
-#include <arrow/compute/api_scalar.h>
-#include <arrow/compute/api_vector.h>
-#include <arrow/compute/cast.h>
-#include <arrow/table.h>
-#include <arrow/builder.h>
 
 namespace logai {
 
@@ -336,65 +329,65 @@ Preprocessor::identify_timestamps(const LogRecordObject& logrecord) {
     return std::nullopt;
 }
 
-std::shared_ptr<arrow::Table> Preprocessor::group_log_index(
-    std::shared_ptr<arrow::Table> attributes, 
-    const std::vector<std::string>& by) {
+bool Preprocessor::group_log_index(
+    duckdb::Connection& conn, 
+    const std::string& table_name,
+    const std::vector<std::string>& by,
+    const std::string& result_table) {
     
-    if (!attributes || attributes->num_rows() == 0 || by.empty()) {
-        return attributes;
+    if (by.empty()) {
+        return false;
     }
     
-    // Verify all requested columns exist
-    for (const auto& col_name : by) {
-        if (attributes->GetColumnByName(col_name) == nullptr) {
-            throw std::runtime_error("Column not found: " + col_name);
+    try {
+        // Verify table exists
+        auto check_result = conn.Query("SELECT 1 FROM " + table_name + " LIMIT 1");
+        if (check_result->HasError()) {
+            throw std::runtime_error("Table not found: " + table_name);
         }
-    }
-    
-    // Add group_index column
-    arrow::Int64Builder index_builder;
-    auto status = index_builder.Reserve(attributes->num_rows());
-    if (!status.ok()) {
-        return nullptr;
-    }
-    
-    for (int64_t i = 0; i < attributes->num_rows(); ++i) {
-        status = index_builder.Append(i);
-        if (!status.ok()) {
-            return nullptr;
+        
+        // Get the columns in the table to verify all requested columns exist
+        auto columns_result = conn.Query("PRAGMA table_info('" + table_name + "')");
+        if (columns_result->HasError()) {
+            throw std::runtime_error("Failed to get table info for: " + table_name);
         }
-    }
-    
-    std::shared_ptr<arrow::Array> index_array;
-    status = index_builder.Finish(&index_array);
-    if (!status.ok()) {
-        return nullptr;
-    }
-    
-    // Add index column to attributes
-    std::vector<std::shared_ptr<arrow::Field>> new_fields = attributes->schema()->fields();
-    new_fields.push_back(arrow::field("group_index", arrow::int64()));
-    
-    std::vector<std::shared_ptr<arrow::Array>> new_columns;
-    // Convert chunked arrays to arrays
-    for (int i = 0; i < attributes->num_columns(); ++i) {
-        auto chunked_array = attributes->column(i);
-        if (chunked_array->num_chunks() == 1) {
-            new_columns.push_back(chunked_array->chunk(0));
-        } else {
-            // Would need to concatenate chunks here, for simplicity just using first chunk
-            new_columns.push_back(chunked_array->chunk(0));
+        
+        std::vector<std::string> existing_columns;
+        for (size_t i = 0; i < columns_result->RowCount(); i++) {
+            existing_columns.push_back(columns_result->GetValue(1, i).ToString());
         }
+        
+        // Verify all requested columns exist
+        for (const auto& col_name : by) {
+            if (std::find(existing_columns.begin(), existing_columns.end(), col_name) == existing_columns.end()) {
+                throw std::runtime_error("Column not found: " + col_name);
+            }
+        }
+        
+        // Create the group by SQL query
+        std::string columns = "";
+        for (size_t i = 0; i < by.size(); i++) {
+            if (i > 0) columns += ", ";
+            columns += by[i];
+        }
+        
+        // Create SQL to select distinct values with group indices
+        std::string sql = "CREATE TABLE " + result_table + " AS "
+                          "SELECT " + columns + ", ROW_NUMBER() OVER (ORDER BY " + columns + ") - 1 AS group_index "
+                          "FROM " + table_name + " "
+                          "GROUP BY " + columns;
+        
+        // Execute the query
+        auto result = conn.Query(sql);
+        if (result->HasError()) {
+            throw std::runtime_error("Failed to create grouped table: " + result->GetError());
+        }
+        
+        return true;
+    } catch (const std::exception& e) {
+        // Log the error and return false
+        return false;
     }
-    new_columns.push_back(index_array);
-    
-    auto new_schema = arrow::schema(new_fields);
-    auto new_table = arrow::Table::Make(new_schema, new_columns);
-    
-    // Since the GroupBy functionality is complex to implement without
-    // the proper arrow::compute API, we'll return the table with the index column
-    // and leave the actual grouping to be implemented when needed.
-    return new_table;
 }
 
 } // namespace logai 

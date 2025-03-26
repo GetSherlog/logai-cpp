@@ -7,9 +7,6 @@
 #include <string>
 #include <sstream>
 #include <iostream>
-#include <arrow/api.h>
-#include <arrow/compute/api.h>
-#include <arrow/builder.h>
 #include <absl/strings/str_join.h>
 
 namespace logai {
@@ -81,22 +78,6 @@ std::unordered_map<std::string, std::string> create_group_key(
     }
     
     return key;
-}
-
-// Helper to convert a vector to an Arrow array
-template<typename T>
-std::shared_ptr<arrow::Array> vector_to_arrow_array(const std::vector<T>& vec) {
-    arrow::NumericBuilder<typename arrow::CTypeTraits<T>::ArrowType> builder;
-    auto status = builder.AppendValues(vec);
-    if (!status.ok()) {
-        return nullptr;
-    }
-    std::shared_ptr<arrow::Array> array;
-    status = builder.Finish(&array);
-    if (!status.ok()) {
-        return nullptr;
-    }
-    return array;
 }
 
 } // anonymous namespace
@@ -222,7 +203,9 @@ FeatureExtractionResult FeatureExtractor::convert_to_counter_vector(
 
 FeatureExtractionResult FeatureExtractor::convert_to_feature_vector(
     const std::vector<LogRecordObject>& logs,
-    const std::shared_ptr<arrow::Table>& log_vectors) {
+    duckdb::Connection& conn,
+    const std::string& log_vectors_table,
+    const std::string& output_table) {
     
     FeatureExtractionResult result;
     
@@ -238,84 +221,112 @@ FeatureExtractionResult FeatureExtractor::convert_to_feature_vector(
     result.event_indices.reserve(grouped_logs.size());
     result.group_identifiers.reserve(grouped_logs.size());
     
-    // Create feature vectors using Arrow
-    if (log_vectors && log_vectors->num_rows() > 0) {
-        std::vector<std::shared_ptr<arrow::ChunkedArray>> merged_features;
-        merged_features.reserve(log_vectors->num_columns());
+    try {
+        // Check if log vectors table exists
+        auto check_result = conn.Query("SELECT COUNT(*) FROM " + log_vectors_table + " LIMIT 1");
+        if (check_result->HasError()) {
+            throw std::runtime_error("Log vectors table not found: " + log_vectors_table);
+        }
         
-        // Initialize merged feature arrays
-        for (int col_idx = 0; col_idx < log_vectors->num_columns(); ++col_idx) {
-            merged_features.push_back(std::make_shared<arrow::ChunkedArray>(
-                std::vector<std::shared_ptr<arrow::Array>>{}));
+        // Get column names from the log vectors table
+        auto columns_result = conn.Query("PRAGMA table_info('" + log_vectors_table + "')");
+        if (columns_result->HasError()) {
+            throw std::runtime_error("Failed to get columns for table: " + log_vectors_table);
+        }
+        
+        std::vector<std::string> feature_columns;
+        for (size_t i = 0; i < columns_result->RowCount(); i++) {
+            // Column name is at index 1
+            std::string col_name = columns_result->GetValue(1, i).ToString();
+            // Skip the id/index column
+            if (col_name != "id" && col_name != "index") {
+                feature_columns.push_back(col_name);
+            }
+        }
+        
+        if (feature_columns.empty()) {
+            throw std::runtime_error("No feature columns found in table: " + log_vectors_table);
+        }
+        
+        // Create the output feature vectors table
+        std::string create_table_sql = "CREATE TABLE " + output_table + " (";
+        create_table_sql += "group_id INTEGER, ";
+        
+        // Add group identifier columns
+        if (!grouped_logs.empty() && !grouped_logs[0].first.empty()) {
+            for (const auto& [key, _] : grouped_logs[0].first) {
+                create_table_sql += "\"" + key + "\" VARCHAR, ";
+            }
+        }
+        
+        // Add feature columns
+        for (size_t i = 0; i < feature_columns.size(); i++) {
+            create_table_sql += "\"feature_" + std::to_string(i) + "\" DOUBLE";
+            if (i < feature_columns.size() - 1) {
+                create_table_sql += ", ";
+            }
+        }
+        create_table_sql += ")";
+        
+        // Execute create table SQL
+        auto create_result = conn.Query(create_table_sql);
+        if (create_result->HasError()) {
+            throw std::runtime_error("Failed to create output table: " + create_result->GetError());
         }
         
         // Process each group
-        for (const auto& [group_key, indices] : grouped_logs) {
+        for (size_t group_id = 0; group_id < grouped_logs.size(); group_id++) {
+            const auto& [group_key, indices] = grouped_logs[group_id];
+            
             // Store group metadata
             result.event_indices.push_back(indices);
             result.group_identifiers.push_back(group_key);
             
+            // Create comma-separated list of indices for IN clause
+            std::string indices_str;
+            for (size_t i = 0; i < indices.size(); i++) {
+                indices_str += std::to_string(indices[i]);
+                if (i < indices.size() - 1) {
+                    indices_str += ", ";
+                }
+            }
+            
             // Calculate mean of feature vectors for this group
-            for (int col_idx = 0; col_idx < log_vectors->num_columns(); ++col_idx) {
-                const auto& column = log_vectors->column(col_idx);
-                
-                // Collect values for this group
-                std::vector<double> group_values;
-                group_values.reserve(indices.size());
-                
-                for (size_t idx : indices) {
-                    if (idx < static_cast<size_t>(column->length())) {
-                        double value;
-                        if (column->type()->id() == arrow::Type::DOUBLE) {
-                            auto double_array = std::static_pointer_cast<arrow::NumericArray<arrow::DoubleType>>(column->chunk(0));
-                            if (!double_array->IsNull(idx)) {
-                                value = double_array->Value(idx);
-                                group_values.push_back(value);
-                            }
-                        } else if (column->type()->id() == arrow::Type::INT64) {
-                            auto int_array = std::static_pointer_cast<arrow::NumericArray<arrow::Int64Type>>(column->chunk(0));
-                            if (!int_array->IsNull(idx)) {
-                                value = static_cast<double>(int_array->Value(idx));
-                                group_values.push_back(value);
-                            }
-                        }
-                    }
+            std::string feature_calc_sql = "INSERT INTO " + output_table + " SELECT ";
+            feature_calc_sql += std::to_string(group_id) + " AS group_id, ";
+            
+            // Add group identifiers
+            for (const auto& [key, value] : group_key) {
+                feature_calc_sql += "'" + value + "' AS \"" + key + "\", ";
+            }
+            
+            // Add feature averages
+            for (size_t i = 0; i < feature_columns.size(); i++) {
+                feature_calc_sql += "AVG(" + feature_columns[i] + ") AS \"feature_" + std::to_string(i) + "\"";
+                if (i < feature_columns.size() - 1) {
+                    feature_calc_sql += ", ";
                 }
-                
-                // Calculate mean and add to merged features
-                if (!group_values.empty()) {
-                    double mean = std::accumulate(group_values.begin(), group_values.end(), 0.0) / 
-                                  group_values.size();
-                    
-                    auto builder = std::make_shared<arrow::DoubleBuilder>();
-                    auto status = builder->Append(mean);
-                    if (!status.ok()) {
-                        // Handle error
-                        std::cerr << "Error appending value: " << status.ToString() << std::endl;
-                    }
-                    std::shared_ptr<arrow::Array> mean_array;
-                    status = builder->Finish(&mean_array);
-                    if (!status.ok()) {
-                        continue;
-                    }
-                    
-                    auto existing_chunks = merged_features[col_idx]->chunks();
-                    std::vector<std::shared_ptr<arrow::Array>> new_chunks = existing_chunks;
-                    new_chunks.push_back(mean_array);
-                    
-                    merged_features[col_idx] = std::make_shared<arrow::ChunkedArray>(new_chunks);
-                }
+            }
+            
+            feature_calc_sql += " FROM " + log_vectors_table;
+            
+            if (!indices.empty()) {
+                feature_calc_sql += " WHERE id IN (" + indices_str + ")";
+            }
+            
+            // Execute feature calculation SQL
+            auto calc_result = conn.Query(feature_calc_sql);
+            if (calc_result->HasError()) {
+                std::cerr << "Error calculating features for group " << group_id << ": " 
+                          << calc_result->GetError() << std::endl;
             }
         }
         
-        // Create Arrow table from merged features
-        std::vector<std::shared_ptr<arrow::Field>> fields;
-        for (int i = 0; i < log_vectors->num_columns(); ++i) {
-            fields.push_back(arrow::field("feature_" + std::to_string(i), arrow::float64()));
-        }
+        // Set the output table name in the result
+        result.feature_vectors_table = output_table;
         
-        auto schema = std::make_shared<arrow::Schema>(fields);
-        result.feature_vectors = arrow::Table::Make(schema, merged_features);
+    } catch (const std::exception& e) {
+        std::cerr << "Error in convert_to_feature_vector: " << e.what() << std::endl;
     }
     
     return result;

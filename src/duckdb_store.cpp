@@ -1,20 +1,17 @@
 #include "duckdb_store.h"
 #include <spdlog/spdlog.h>
+#include <iostream>
 
 namespace logai {
 
 DuckDBStore::DuckDBStore() {
     try {
-        {
-            auto db = db_.wlock();
-            *db = std::make_unique<duckdb::DuckDB>(":memory:");
-        }
-        {
-            auto db = db_.rlock();
-            auto conn = conn_.wlock();
-            *conn = std::make_unique<duckdb::Connection>(**db);
-        }
-        spdlog::info("DuckDB store initialized successfully");
+        // Create an in-memory DuckDB database
+        m_db_path = ":memory:";  // Use in-memory database by default
+        m_db = std::make_unique<duckdb::DuckDB>(m_db_path);
+        m_conn = std::make_unique<duckdb::Connection>(*m_db);
+        
+        spdlog::info("DuckDB store initialized with in-memory database");
     } catch (const std::exception& e) {
         spdlog::error("Failed to initialize DuckDB store: {}", e.what());
         throw;
@@ -174,6 +171,10 @@ std::vector<std::pair<std::string, std::string>> DuckDBStore::get_schema(const s
         spdlog::error("Failed to get schema for template {}: {}", template_id, e.what());
         return {};
     }
+}
+
+std::string DuckDBStore::get_db_path() const {
+    return m_db_path;
 }
 
 } // namespace logai 

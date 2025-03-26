@@ -11,7 +11,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
-#include <arrow/api.h>
+#include <duckdb.hpp>
 
 namespace logai {
 
@@ -32,18 +32,26 @@ public:
     /**
      * @brief Fit the encoder on the given categorical data and transform it
      * 
-     * @param table The input table containing categorical columns
-     * @return std::shared_ptr<arrow::Table> A new table with encoded columns
+     * @param conn DuckDB connection to use
+     * @param input_table The name of the input table containing categorical columns
+     * @param output_table The name of the output table to create with encoded columns
+     * @return bool true if successful, false otherwise
      */
-    std::shared_ptr<arrow::Table> fit_transform(const std::shared_ptr<arrow::Table>& table);
+    bool fit_transform(duckdb::Connection& conn, 
+                      const std::string& input_table, 
+                      const std::string& output_table);
     
     /**
      * @brief Transform categorical data using the fitted encoder
      * 
-     * @param table The input table containing categorical columns
-     * @return std::shared_ptr<arrow::Table> A new table with encoded columns
+     * @param conn DuckDB connection to use
+     * @param input_table The name of the input table containing categorical columns
+     * @param output_table The name of the output table to create with encoded columns
+     * @return bool true if successful, false otherwise
      */
-    std::shared_ptr<arrow::Table> transform(const std::shared_ptr<arrow::Table>& table) const;
+    bool transform(duckdb::Connection& conn, 
+                  const std::string& input_table, 
+                  const std::string& output_table) const;
     
     /**
      * @brief Check if the encoder has been fitted
@@ -69,10 +77,11 @@ private:
     bool is_fitted_ = false;
     
     // Private helper method to encode a single column
-    std::shared_ptr<arrow::Array> encode_column(
-        const std::string& column_name, 
-        const std::shared_ptr<arrow::StringArray>& input_column,
-        bool fit) const;
+    bool encode_column(duckdb::Connection& conn,
+                      const std::string& input_table,
+                      const std::string& output_table,
+                      const std::string& column_name,
+                      bool fit) const;
 };
 
 } // namespace logai 

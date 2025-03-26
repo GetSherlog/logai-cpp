@@ -31,7 +31,6 @@ This C++ implementation focuses on performance optimization with multi-threading
 - C++17 compatible compiler
 - CMake 3.10 or higher
 - nlohmann_json library for JSON processing
-- Apache Arrow and Parquet libraries (for integration with the broader LogAI ecosystem)
 - abseil-cpp (for string manipulation utilities)
 - Optional: Python with transformers library (for BERT model integration)
 
