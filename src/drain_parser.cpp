@@ -1,11 +1,19 @@
+// ============================================================================
+// drain_parser.cpp
+// ============================================================================
 #include "drain_parser.h"
+#include "log_record_object.h"
+
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <sstream>
 #include <iostream>
 #include <chrono>
 #include <numeric>
+#include <memory>
+
 
 // Folly includes
 #include <folly/container/F14Map.h>
@@ -15,7 +23,6 @@
 #include <folly/small_vector.h>
 #include <spdlog/spdlog.h>
 
-// Consider CTRE for regex if available
 #include <regex>
 
 namespace logai {
@@ -31,27 +38,25 @@ TokenVector tokenize(std::string_view str, char delimiter = ' ') {
     if (str.empty()) {
         return tokens;
     }
-    
     try {
         folly::split(delimiter, str, tokens);
     } catch (const std::exception& e) {
         spdlog::error("Error in tokenize function: {}", e.what());
     }
-    
     return tokens;
 }
 
 bool is_number(std::string_view str) {
     if (str.empty()) return false;
-    
     if (str.size() == 1) return std::isdigit(str[0]);
-    
+
+    // Allow initial +, -, or decimal point
     if (!std::isdigit(str[0]) && str[0] != '-' && str[0] != '+' && str[0] != '.') {
         return false;
     }
-    
+
     bool has_dot = (str[0] == '.');
-    
+
     for (size_t i = 1; i < str.size(); ++i) {
         char c = str[i];
         if (c == '.') {
@@ -61,7 +66,6 @@ bool is_number(std::string_view str) {
             return false;
         }
     }
-    
     return true;
 }
 
@@ -71,24 +75,26 @@ public:
         static RegexCache cache;
         return cache;
     }
-    
+
     const std::vector<std::regex>& get_default_patterns() const {
         return default_patterns_;
     }
-    
+
     void set_custom_patterns(std::vector<std::regex> patterns) {
         custom_patterns_ = std::move(patterns);
     }
-    
+
     const std::vector<std::regex>& get_patterns() const {
+        // If custom patterns exist, use them; else use default
         if (!custom_patterns_.empty()) {
             return custom_patterns_;
         }
         return default_patterns_;
     }
-    
+
 private:
     RegexCache() {
+        // Some default patterns for trimming timestamps, brackets, etc.
         default_patterns_.emplace_back(R"(^\[.*?\]\s*)");
         default_patterns_.emplace_back(R"(^\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}(?:\.\d+)?\s+)");
         default_patterns_.emplace_back(R"(^\d{1,2}:\d{1,2}:\d{1,2}(?:\.\d+)?\s+)");
@@ -96,7 +102,7 @@ private:
         default_patterns_.emplace_back(R"(^\w+\s+\w+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4}\s+)");
         default_patterns_.emplace_back(R"(^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+)");
     }
-    
+
     std::vector<std::regex> default_patterns_;
     std::vector<std::regex> custom_patterns_;
 };
@@ -104,13 +110,14 @@ private:
 // Preprocess log using regex patterns
 std::string_view preprocess_log(std::string_view line) {
     const auto& patterns = RegexCache::instance().get_patterns();
+    // We work on a temporary std::string to run regex searches
     std::string line_str(line);
-    
+
     for (const auto& pattern : patterns) {
         std::smatch match;
         if (std::regex_search(line_str, match, pattern)) {
             size_t content_start = match.position() + match.length();
-            if (content_start < line.length()) {
+            if (content_start < line.size()) {
                 return line.substr(content_start);
             }
         }
@@ -120,18 +127,23 @@ std::string_view preprocess_log(std::string_view line) {
 
 } // namespace detail
 
-// DRAIN structures
+
+// ============================================================================
+// DRAIN Structures
+// ============================================================================
+
 struct LogCluster {
     int id;
     std::string log_template;
     detail::TokenVector tokens;
     folly::F14FastSet<size_t> parameter_indices;
-    
-    explicit LogCluster(int id, const detail::TokenVector& tok) 
-        : id(id), tokens(tok) {
+
+    explicit LogCluster(int id_, const detail::TokenVector& tok)
+        : id(id_), tokens(tok)
+    {
         update_template();
     }
-    
+
     void update_template() {
         log_template.clear();
         for (size_t i = 0; i < tokens.size(); ++i) {
@@ -144,54 +156,61 @@ struct LogCluster {
 struct Node {
     folly::F14FastMap<std::string, std::shared_ptr<Node>> children;
     folly::small_vector<std::shared_ptr<LogCluster>, 8> clusters;
-    
-    Node() = default;
 };
 
-// Implementation class for DrainParser
+// ============================================================================
+// DrainParserImpl
+// ============================================================================
 class DrainParserImpl {
 public:
+    // Internal DRAIN config
+    struct DrainConfig {
+        int depth;
+        double similarity_threshold;
+        int max_children;
+    };
+
+public:
     DrainParserImpl(int depth, double similarity_threshold, int max_children)
-        : depth_(depth), 
-          similarity_threshold_(similarity_threshold), 
-          max_children_(max_children), 
-          root_(std::make_shared<Node>()),
-          cluster_id_counter_(0) 
+        : root_(std::make_shared<Node>()),
+          cluster_id_counter_(0)
     {
-        // Initialize configuration
-        auto config = config_.wlock();
-        config->depth = depth;
-        config->similarity_threshold = similarity_threshold;
-        config->max_children = max_children;
+        // Initialize our internal DRAIN config
+        auto conf = drain_config_.wlock();
+        conf->depth = depth;
+        conf->similarity_threshold = similarity_threshold;
+        conf->max_children = max_children;
     }
-    
-    LogRecordObject parse(std::string_view line, const DataLoaderConfig& config) {
+
+    LogRecordObject parse(std::string_view line, const DataLoaderConfig& user_cfg) {
         LogRecordObject record;
         record.body = std::string(line);
-        
+
+        // Preprocess and tokenize
         std::string_view content = detail::preprocess_log(line);
         auto tokens = detail::tokenize(content);
-        
+
+        // Match or create a cluster
         auto matched_cluster = match_log_message(tokens);
-        
+
         record.template_str = matched_cluster->log_template;
-        record.attributes["cluster_id"] = std::to_string(matched_cluster->id);
-    
-        extract_metadata(line, record, config);
-        
+        record.fields["cluster_id"] = std::to_string(matched_cluster->id);
+
+        // Possibly extract more metadata from line or user_cfg
+        extract_metadata(line, record, user_cfg);
         return record;
     }
-    
+
     int get_cluster_id_for_log(std::string_view line) const {
         std::string_view content = detail::preprocess_log(line);
         auto tokens = detail::tokenize(content);
         auto matched_cluster = find_matching_cluster(tokens);
         return matched_cluster->id;
     }
-    
+
     std::optional<int> get_cluster_id_from_record(const LogRecordObject& record) const {
-        auto it = record.attributes.find("cluster_id");
-        if (it != record.attributes.end()) {
+        auto it = record.fields.find("cluster_id");
+        if (it != record.fields.end()) {
             try {
                 return std::stoi(it->second);
             } catch (const std::exception& e) {
@@ -200,30 +219,29 @@ public:
         }
         return std::nullopt;
     }
-    
+
     void set_depth(int depth) {
-        auto config = config_.wlock();
-        config->depth = depth;
+        auto conf = drain_config_.wlock();
+        conf->depth = depth;
     }
-    
+
     void set_similarity_threshold(double threshold) {
-        auto config = config_.wlock();
-        config->similarity_threshold = threshold;
+        auto conf = drain_config_.wlock();
+        conf->similarity_threshold = threshold;
     }
-    
+
     std::optional<std::string> get_template_for_cluster_id(int cluster_id) const {
-        auto templates = templates_.rlock();
-        auto it = templates->find(cluster_id);
-        if (it == templates->end()) {
-            return std::nullopt;
+        auto tmpl_map = templates_.rlock();
+        auto it = tmpl_map->find(cluster_id);
+        if (it != tmpl_map->end()) {
+            return it->second;
         }
-        return it->second;
+        return std::nullopt;
     }
-    
+
     void set_preprocess_patterns(const std::vector<std::string>& pattern_strings) {
         std::vector<std::regex> patterns;
         patterns.reserve(pattern_strings.size());
-        
         for (const auto& pattern_str : pattern_strings) {
             try {
                 patterns.emplace_back(pattern_str);
@@ -231,279 +249,303 @@ public:
                 spdlog::error("Invalid regex pattern: {} - {}", pattern_str, e.what());
             }
         }
-        
         detail::RegexCache::instance().set_custom_patterns(std::move(patterns));
     }
-    
+
     folly::F14FastMap<int, std::string> get_all_templates() const {
         folly::F14FastMap<int, std::string> result;
-        auto templates = templates_.rlock();
-        for (const auto& [id, tmpl] : *templates) {
-            result.emplace(id, tmpl);
+        auto tmpl_map = templates_.rlock();
+        for (const auto& [id, tmpl] : *tmpl_map) {
+            result[id] = tmpl;
         }
         return result;
     }
-    
+
 private:
-    // Thread-safe configuration
-    struct Config {
-        int depth;
-        double similarity_threshold;
-        int max_children;
-    };
-    
-    folly::Synchronized<Config> config_{{
-        .depth = 0,
-        .similarity_threshold = 0.0,
-        .max_children = 0
-    }};
-    
-    folly::Synchronized<std::shared_ptr<Node>> root_;
-    
-    std::atomic<int> cluster_id_counter_;
-    
-    folly::Synchronized<folly::F14FastMap<int, std::string>> templates_;
-    
-    int depth_;
-    double similarity_threshold_;
-    int max_children_;
-    
+    /**
+     * Match or create a LogCluster for the tokenized log line.
+     */
     std::shared_ptr<LogCluster> match_log_message(const detail::TokenVector& tokens) {
-        // Handle empty tokens
+        // If empty, treat as a special cluster
         if (tokens.empty()) {
             auto empty_cluster = std::make_shared<LogCluster>(
-                cluster_id_counter_++, detail::TokenVector{std::string_view("<EMPTY>")}
+                cluster_id_counter_.fetch_add(1),
+                detail::TokenVector{std::string_view("<EMPTY>")}
             );
-            
-            // Cache the template
-            auto templates = templates_.wlock();
-            (*templates)[empty_cluster->id] = empty_cluster->log_template;
-            
+            auto lock_t = templates_.wlock();
+            (*lock_t)[empty_cluster->id] = empty_cluster->log_template;
             return empty_cluster;
         }
-        
-        auto root_locked = root_.wlock();
-        auto config = config_.rlock();
-        auto current_node = *root_locked;
-        
+
+        // Lock for writing the root
+        auto root_lock = root_.wlock();
+        auto drain_conf = drain_config_.rlock();
+
+        // 1) Match by token count at top level
+        auto current_node = *root_lock;
         std::string length_key = std::to_string(tokens.size());
-        
-        if (!current_node->children.contains(length_key)) {
-            current_node->children[length_key] = std::make_shared<Node>();
+
+        auto iter = current_node->children.find(length_key);
+        if (iter == current_node->children.end()) {
+            // Create child node
+            auto new_node = std::make_shared<Node>();
+            current_node->children[length_key] = new_node;
+            current_node = new_node;
+        } else {
+            current_node = iter->second;
         }
-        current_node = current_node->children[length_key];
-        
-        const int max_depth = std::min(config->depth, static_cast<int>(tokens.size()));
+
+        // 2) Descend up to drain_conf->depth
+        const int max_depth = std::min(drain_conf->depth, static_cast<int>(tokens.size()));
         for (int depth = 0; depth < max_depth; ++depth) {
             std::string_view token = tokens[depth];
-            std::string token_key;
-            
-            if (detail::is_number(token)) {
-                token_key = WILDCARD;
-            } else {
-                token_key = std::string(token);
-            }
-            
-            if (!current_node->children.contains(token_key)) {
-                if (current_node->children.size() < config->max_children) {
-                    current_node->children[token_key] = std::make_shared<Node>();
+            std::string token_key = detail::is_number(token) ? WILDCARD
+                                                             : std::string(token);
+            auto child_iter = current_node->children.find(token_key);
+            if (child_iter == current_node->children.end()) {
+                // Possibly fallback to wildcard if children is at capacity
+                if ((int)current_node->children.size() < drain_conf->max_children) {
+                    auto new_node = std::make_shared<Node>();
+                    current_node->children[token_key] = new_node;
+                    current_node = new_node;
                 } else {
+                    // Force to wildcard
                     token_key = WILDCARD;
-                    if (!current_node->children.contains(token_key)) {
-                        current_node->children[token_key] = std::make_shared<Node>();
+                    auto w_iter = current_node->children.find(token_key);
+                    if (w_iter == current_node->children.end()) {
+                        auto new_node = std::make_shared<Node>();
+                        current_node->children[token_key] = new_node;
+                        current_node = new_node;
+                    } else {
+                        current_node = w_iter->second;
                     }
                 }
+            } else {
+                current_node = child_iter->second;
             }
-            
-            current_node = current_node->children[token_key];
         }
-        
+
+        // 3) Among existing clusters, pick best match above threshold
         double max_similarity = -1.0;
         std::shared_ptr<LogCluster> matched_cluster = nullptr;
-        
-        for (const auto& cluster : current_node->clusters) {
-            double similarity = calculate_similarity(cluster->tokens, tokens);
-            
-            if (similarity > max_similarity && similarity >= config->similarity_threshold) {
-                max_similarity = similarity;
+
+        for (auto& cluster : current_node->clusters) {
+            double sim = calculate_similarity(cluster->tokens, tokens);
+            if (sim > max_similarity && sim >= drain_conf->similarity_threshold) {
+                max_similarity = sim;
                 matched_cluster = cluster;
             }
         }
-        
+
+        // 4) If no match, create
         if (!matched_cluster) {
-            matched_cluster = std::make_shared<LogCluster>(cluster_id_counter_++, tokens);
+            matched_cluster = std::make_shared<LogCluster>(cluster_id_counter_.fetch_add(1), tokens);
             extract_parameters(tokens, matched_cluster);
             current_node->clusters.push_back(matched_cluster);
         } else {
+            // Update the cluster's template if needed
             update_template(matched_cluster, tokens);
         }
-        
-        auto templates = templates_.wlock();
-        (*templates)[matched_cluster->id] = matched_cluster->log_template;
-        
+
+        // Update the global template map
+        {
+            auto lock_t = templates_.wlock();
+            (*lock_t)[matched_cluster->id] = matched_cluster->log_template;
+        }
+
         return matched_cluster;
     }
-    
+
+    /**
+     * Find existing cluster that best matches the tokens. Does NOT create a new cluster.
+     */
     std::shared_ptr<LogCluster> find_matching_cluster(const detail::TokenVector& tokens) const {
         if (tokens.empty()) {
-            return std::make_shared<LogCluster>(-1, detail::TokenVector{std::string_view("<EMPTY>")});
+            return std::make_shared<LogCluster>(-1,
+                detail::TokenVector{std::string_view("<EMPTY>")});
         }
-        
-        auto root_locked = root_.rlock();
-        auto config = config_.rlock();
-        auto current_node = *root_locked;
-        
+        auto root_lock = root_.rlock();
+        auto drain_conf = drain_config_.rlock();
+
+        auto current_node = *root_lock;
         std::string length_key = std::to_string(tokens.size());
-        
-        if (!current_node->children.contains(length_key)) {
+
+        auto iter = current_node->children.find(length_key);
+        if (iter == current_node->children.end()) {
+            // Not found
             return std::make_shared<LogCluster>(-1, tokens);
         }
-        current_node = current_node->children.at(length_key);
-        
-        const int max_depth = std::min(config->depth, static_cast<int>(tokens.size()));
+        current_node = iter->second;
+
+        const int max_depth = std::min(drain_conf->depth, static_cast<int>(tokens.size()));
         for (int depth = 0; depth < max_depth; ++depth) {
             std::string_view token = tokens[depth];
-            std::string token_key;
-            
-            if (detail::is_number(token)) {
-                token_key = WILDCARD;
-            } else {
-                token_key = std::string(token);
-            }
-            
-            // Try to find the token in children
-            if (!current_node->children.contains(token_key)) {
-                // Try wildcard as fallback
-                token_key = WILDCARD;
-                if (!current_node->children.contains(token_key)) {
-                    // No matching path, return a default cluster
+            std::string token_key = detail::is_number(token) ? WILDCARD
+                                                             : std::string(token);
+
+            auto child_iter = current_node->children.find(token_key);
+            if (child_iter == current_node->children.end()) {
+                // Try wildcard fallback
+                child_iter = current_node->children.find(WILDCARD);
+                if (child_iter == current_node->children.end()) {
                     return std::make_shared<LogCluster>(-1, tokens);
                 }
             }
-            
-            // Move to the child node
-            current_node = current_node->children.at(token_key);
+            current_node = child_iter->second;
         }
-        
-        // Find best matching cluster
+
+        // Now pick the best cluster that meets threshold
         double max_similarity = -1.0;
         std::shared_ptr<LogCluster> matched_cluster = nullptr;
-        
-        // Try to find the best match from existing clusters
-        for (const auto& cluster : current_node->clusters) {
-            double similarity = calculate_similarity(cluster->tokens, tokens);
-            
-            if (similarity > max_similarity && similarity >= config->similarity_threshold) {
-                max_similarity = similarity;
+        for (auto& cluster : current_node->clusters) {
+            double sim = calculate_similarity(cluster->tokens, tokens);
+            if (sim > max_similarity && sim >= drain_conf->similarity_threshold) {
+                max_similarity = sim;
                 matched_cluster = cluster;
             }
         }
-        
-        // If no match found, return a temporary cluster
         if (!matched_cluster) {
+            // Not found
             return std::make_shared<LogCluster>(-1, tokens);
         }
-        
         return matched_cluster;
     }
-    
-    double calculate_similarity(const detail::TokenVector& tokens1, const detail::TokenVector& tokens2) const {
-        // Calculate similarity based on common tokens
-        size_t common_tokens = 0;
-        const size_t min_size = std::min(tokens1.size(), tokens2.size());
-        
+
+    /**
+     * Compute similarity between two token vectors (simple example).
+     */
+    double calculate_similarity(const detail::TokenVector& t1,
+                                const detail::TokenVector& t2) const
+    {
+        size_t common = 0;
+        const size_t min_size = std::min(t1.size(), t2.size());
         for (size_t i = 0; i < min_size; ++i) {
-            if (tokens1[i] == tokens2[i] || tokens1[i] == WILDCARD) {
-                ++common_tokens;
+            // If exact match or cluster token is wildcard
+            if (t1[i] == t2[i] || t1[i] == WILDCARD) {
+                ++common;
             }
         }
-        
-        // Calculate normalized similarity
-        return static_cast<double>(common_tokens) / std::max(tokens1.size(), tokens2.size());
+        return double(common) / double(std::max(t1.size(), t2.size()));
     }
-    
-    void update_template(std::shared_ptr<LogCluster> cluster, const detail::TokenVector& tokens) {
+
+    /**
+     * Update a cluster template by merging in new tokens.
+     */
+    void update_template(const std::shared_ptr<LogCluster>& cluster,
+                         const detail::TokenVector& tokens)
+    {
         if (tokens.empty()) {
             return;
         }
-        
-        // First time seeing this cluster? Initialize with the tokens
+
         if (cluster->tokens.empty()) {
+            // Just copy directly
             cluster->tokens = tokens;
             extract_parameters(tokens, cluster);
             cluster->update_template();
             return;
         }
-        
-        // Update template tokens
-        const size_t min_size = std::min(cluster->tokens.size(), tokens.size());
-        
-        // Check for token mismatches and convert to wildcards
-        for (size_t i = 0; i < min_size; ++i) {
+
+        size_t min_sz = std::min(cluster->tokens.size(), tokens.size());
+        for (size_t i = 0; i < min_sz; ++i) {
             if (cluster->tokens[i] != tokens[i] && cluster->tokens[i] != WILDCARD) {
-                if (detail::is_number(cluster->tokens[i]) && detail::is_number(tokens[i])) {
-                    // Both are numbers, convert to wildcard
+                // If both numeric, wildcard them
+                if (detail::is_number(cluster->tokens[i]) &&
+                    detail::is_number(tokens[i]))
+                {
                     cluster->tokens[i] = WILDCARD;
                     cluster->parameter_indices.insert(i);
-                } else if (cluster->tokens[i] != tokens[i]) {
-                    // Different tokens, convert to wildcard
+                }
+                else {
+                    // Different tokens => wildcard
                     cluster->tokens[i] = WILDCARD;
                     cluster->parameter_indices.insert(i);
                 }
             }
         }
-        
-        // Update template string
         cluster->update_template();
-        
-        // Update cache
-        auto templates = templates_.wlock();
-        (*templates)[cluster->id] = cluster->log_template;
+
+        // Update the templates map
+        auto lock_t = templates_.wlock();
+        (*lock_t)[cluster->id] = cluster->log_template;
     }
-    
-    void extract_parameters(const detail::TokenVector& tokens, std::shared_ptr<LogCluster> cluster) {
-        // Mark tokens that are likely parameters (e.g., numbers, hex, etc.)
+
+    /**
+     * Mark likely parameters (numbers, etc.) as wildcard/parameters.
+     */
+    void extract_parameters(const detail::TokenVector& tokens,
+                            const std::shared_ptr<LogCluster>& cluster)
+    {
         for (size_t i = 0; i < tokens.size(); ++i) {
             if (detail::is_number(tokens[i])) {
                 cluster->parameter_indices.insert(i);
             }
         }
     }
-    
-    void extract_metadata(std::string_view line, LogRecordObject& record, const DataLoaderConfig& config) {
+
+    /**
+     * Example metadata extraction
+     */
+    void extract_metadata(std::string_view line,
+                          LogRecordObject& record,
+                          const DataLoaderConfig& /*unused*/)
+    {
         try {
-            // Add some basic metadata
-            record.attributes["source"] = "log";
-            
-            // Basic timestamp detection
+            // Just fill in a dummy source
+            record.fields["source"] = "log";
+
+            // If the line starts with something that looks like a timestamp
             if (!line.empty()) {
-                size_t timestamp_end = line.find(' ');
-                if (timestamp_end != std::string_view::npos && timestamp_end > 0) {
-                    std::string_view timestamp_str = line.substr(0, timestamp_end);
-                    
-                    if (timestamp_str.find(':') != std::string_view::npos || 
-                        timestamp_str.find('-') != std::string_view::npos) {
-                        record.attributes["detected_timestamp"] = std::string(timestamp_str);
+                size_t pos = line.find(' ');
+                if (pos != std::string_view::npos) {
+                    std::string_view maybe_ts = line.substr(0, pos);
+                    if (maybe_ts.find(':') != std::string_view::npos ||
+                        maybe_ts.find('-') != std::string_view::npos)
+                    {
+                        record.fields["detected_timestamp"] = std::string(maybe_ts);
                     }
                 }
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception& e) {
             spdlog::error("Error extracting metadata: {}", e.what());
         }
     }
+
+private:
+    // A thread-safe structure for the DRAIN configuration:
+    folly::Synchronized<DrainConfig> drain_config_{{
+        /*depth=*/4, /*similarity_threshold=*/0.5, /*max_children=*/100
+    }};
+
+    // A thread-safe structure for the parse-tree root
+    folly::Synchronized<std::shared_ptr<Node>> root_;
+
+    // Cluster ID generator
+    std::atomic<int> cluster_id_counter_;
+
+    // Thread-safe map of id -> template
+    folly::Synchronized<folly::F14FastMap<int, std::string>> templates_;
 };
 
-// Public API implementation
+// ============================================================================
+// DrainParser methods
+// ============================================================================
 
-DrainParser::DrainParser(const DataLoaderConfig& config, int depth, double similarity_threshold, int max_children)
-    : impl_(std::make_unique<DrainParserImpl>(depth, similarity_threshold, max_children)), 
-      config_(config) {
+DrainParser::DrainParser(const DataLoaderConfig& config,
+                         int depth,
+                         double similarity_threshold,
+                         int max_children)
+    : impl_(std::make_unique<DrainParserImpl>(depth, similarity_threshold, max_children)),
+      user_config_(config)
+{
 }
 
 DrainParser::~DrainParser() = default;
 
 LogRecordObject DrainParser::parse_line(std::string_view line) {
-    return impl_->parse(line, config_);
+    // We pass the user’s config in, in case metadata extraction needs it
+    return impl_->parse(line, user_config_);
 }
 
 void DrainParser::setDepth(int depth) {
@@ -518,20 +560,20 @@ void DrainParser::set_preprocess_patterns(const std::vector<std::string>& patter
     impl_->set_preprocess_patterns(pattern_strings);
 }
 
-folly::F14FastMap<int, std::string> DrainParser::get_all_templates() const {
-    return impl_->get_all_templates();
+std::optional<std::string> DrainParser::get_template_for_cluster_id(int cluster_id) const {
+    return impl_->get_template_for_cluster_id(cluster_id);
 }
 
 int DrainParser::get_cluster_id_for_log(std::string_view line) const {
     return impl_->get_cluster_id_for_log(line);
 }
 
-std::optional<int> DrainParser::get_cluster_id_from_record(const LogRecordObject& record) const {
-    return impl_->get_cluster_id_from_record(record);
+folly::F14FastMap<int, std::string> DrainParser::get_all_templates() const {
+    return impl_->get_all_templates();
 }
 
-std::optional<std::string> DrainParser::get_template_for_cluster_id(const int cluster_id) const {
-    return impl_->get_template_for_cluster_id(cluster_id);
+std::optional<int> DrainParser::get_cluster_id_from_record(const LogRecordObject& record) const {
+    return impl_->get_cluster_id_from_record(record);
 }
 
 } // namespace logai

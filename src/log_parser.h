@@ -6,6 +6,7 @@
 #include <vector>
 #include <chrono>
 #include <optional>
+#include <folly/FBString.h>
 
 namespace logai {
 
@@ -23,7 +24,7 @@ public:
         LogRecordObject to_record_object() const {
             LogRecordObject record;
             for (const auto& [key, value] : fields) {
-                record.fields[key] = value;
+                record.fields[folly::fbstring(key)] = folly::fbstring(value);
             }
             return record;
         }

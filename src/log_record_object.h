@@ -9,6 +9,8 @@ namespace logai {
 
 class LogRecordObject {
 public:
+    std::string body;
+    std::string template_str;
     folly::F14FastMap<folly::fbstring, folly::fbstring> fields;
 
     bool has_field(const std::string& key) const {
