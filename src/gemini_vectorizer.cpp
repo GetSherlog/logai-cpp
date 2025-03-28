@@ -8,6 +8,9 @@
 #include <iostream>
 #include <sstream>
 #include <spdlog/spdlog.h>
+#include <curl/curl.h>
+#include <nlohmann/json.hpp>
+#include <iomanip>
 
 namespace logai {
 
@@ -134,36 +137,35 @@ std::optional<std::vector<float>> GeminiVectorizer::get_embedding(const std::str
             return std::nullopt;
         }
         
-        // Parse response
-        try {
-            nlohmann::json json_response = nlohmann::json::parse(response);
+    // Parse response
+    try {
+        nlohmann::json json_response = nlohmann::json::parse(response);
+        
+        if (json_response.contains("embedding")) {
+            std::vector<float> embedding;
             
-            if (json_response.contains("embedding")) {
-                std::vector<float> embedding;
-                
-                if (json_response["embedding"].contains("values")) {
-                    embedding = json_response["embedding"]["values"].get<std::vector<float>>();
-                } else if (json_response["embedding"].is_array()) {
-                    embedding = json_response["embedding"].get<std::vector<float>>();
-                } else {
-                    spdlog::error("Invalid embedding format in response");
-                    return std::nullopt;
-                }
-                
-                result = embedding;
-            } else if (json_response.contains("embeddings")) {
-                std::vector<float> embedding;
-                
-                if (json_response["embeddings"].is_array() && !json_response["embeddings"].empty()) {
-                    embedding = json_response["embeddings"][0].get<std::vector<float>>();
-                    result = embedding;
-                }
-            } else if (json_response.contains("error")) {
-                spdlog::error("API error: {}", json_response["error"].dump());
+            if (json_response["embedding"].contains("values")) {
+                embedding = json_response["embedding"]["values"].get<std::vector<float>>();
+            } else if (json_response["embedding"].is_array()) {
+                embedding = json_response["embedding"].get<std::vector<float>>();
+            } else {
+                spdlog::error("Invalid embedding format in response");
+                return std::nullopt;
             }
-        } catch (const std::exception& e) {
-            spdlog::error("Failed to parse JSON response: {}", e.what());
+            
+            result = embedding;
+        } else if (json_response.contains("embeddings")) {
+            std::vector<float> embedding;
+            
+            if (json_response["embeddings"].is_array() && !json_response["embeddings"].empty()) {
+                embedding = json_response["embeddings"][0].get<std::vector<float>>();
+                result = embedding;
+            }
+        } else if (json_response.contains("error")) {
+            spdlog::error("API error: {}", json_response["error"].dump());
         }
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to parse JSON response: {}", e.what());
     }
     
     // If we got a result, add it to the cache
@@ -184,20 +186,22 @@ std::optional<std::vector<float>> GeminiVectorizer::get_embedding(const std::str
 }
 
 bool GeminiVectorizer::is_valid() {
-    // Check if API key is valid by making a test request
+    auto config = config_.rlock();
+    if (config->api_key.empty() && !std::getenv(config->api_key_env_var.c_str())) {
+        return false;
+    }
+    
     auto test_embedding = get_embedding("Test message");
     return test_embedding.has_value();
 }
 
 void GeminiVectorizer::set_api_key(const std::string& api_key) {
-    // Update the API key in the configuration
     {
         auto config = config_.wlock();
         config->api_key = api_key;
         config->use_env_api_key = false;
     }
     
-    // Clear the cache
     {
         auto cache = embedding_cache_.wlock();
         cache->clear();
@@ -205,13 +209,11 @@ void GeminiVectorizer::set_api_key(const std::string& api_key) {
 }
 
 void GeminiVectorizer::set_model_name(const std::string& model_name) {
-    // Update the model name in the configuration
     {
         auto config = config_.wlock();
         config->model_name = model_name;
     }
     
-    // Clear the cache
     {
         auto cache = embedding_cache_.wlock();
         cache->clear();
@@ -219,7 +221,6 @@ void GeminiVectorizer::set_model_name(const std::string& model_name) {
 }
 
 std::string GeminiVectorizer::get_api_key() const {
-    // Get a copy of the configuration
     GeminiVectorizerConfig config_copy;
     {
         auto config = config_.rlock();
@@ -230,58 +231,41 @@ std::string GeminiVectorizer::get_api_key() const {
         return config_copy.api_key;
     }
     
-    // Try to get API key from environment
     const char* env_api_key = std::getenv(config_copy.api_key_env_var.c_str());
-    if (env_api_key) {
-        return env_api_key;
-    }
-    
-    // Fallback to config API key
-    return config_copy.api_key;
+    return env_api_key ? env_api_key : "";
 }
 
 std::string GeminiVectorizer::build_request_url() const {
-    // Get API key and model name
-    std::string api_key = get_api_key();
-    
-    std::string model_name;
+    std::string url;
+    std::string model;
     {
         auto config = config_.rlock();
-        model_name = config->model_name;
+        url = std::string("https://generativelanguage.googleapis.com") + "/v1/models/" + config->model_name + ":embedContent";
+        model = config->model_name;
     }
     
-    // Use URL encoding for the model name
-    std::string encoded_model = url_encode(model_name);
-    
-    return "https://generativelanguage.googleapis.com/v1beta/models/" + 
-           encoded_model + ":embedContent?key=" + api_key;
+    std::string encoded_model = url_encode(model);
+    return url;
 }
 
 std::string GeminiVectorizer::build_request_payload(const std::string& text) const {
-    // Get model name
-    std::string model_name;
+    nlohmann::json payload;
     {
         auto config = config_.rlock();
-        model_name = config->model_name;
+        payload["model"] = config->model_name;
     }
     
-    // Create JSON payload
-    nlohmann::json payload = {
-        {"model", "models/" + model_name},
-        {"content", {
-            {"parts", {
-                {{"text", text}}
-            }}
-        }}
-    };
+    nlohmann::json content;
+    content["parts"][0]["text"] = text;
+    payload["contents"].push_back(content);
     
     return payload.dump();
 }
 
 size_t GeminiVectorizer::write_callback(void* contents, size_t size, size_t nmemb, std::string* response) {
-    size_t total_size = size * nmemb;
-    response->append(static_cast<char*>(contents), total_size);
-    return total_size;
+    size_t realsize = size * nmemb;
+    response->append((char*)contents, realsize);
+    return realsize;
 }
 
 } // namespace logai

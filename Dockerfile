@@ -6,36 +6,34 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     git cmake g++ make libssl-dev zlib1g-dev \
-    libjsoncpp-dev uuid-dev libmariadb-dev wget curl \
+    libjsoncpp-dev uuid-dev wget curl \
     libcurl4-openssl-dev \
     libboost-all-dev python3 python3-dev python3-pip \
     ninja-build pkg-config unzip \
     nlohmann-json3-dev libjemalloc-dev \
-    libgoogle-glog-dev libgflags-dev liblz4-dev libleveldb-dev \
-    libtbb-dev libhiredis-dev libspdlog-dev libfmt-dev \
+    libgoogle-glog-dev libgflags-dev liblz4-dev \
+    libspdlog-dev libfmt-dev \
+    python3-pybind11 \
+    libprotobuf-dev \
+    protobuf-compiler \
+    libgrpc++-dev \
+    protobuf-compiler-grpc \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Eigen
-WORKDIR /tmp/eigen
-RUN wget -q https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz \
-    && tar -xf eigen-3.4.0.tar.gz \
-    && cd eigen-3.4.0 \
-    && mkdir build && cd build \
-    && cmake .. \
-    && make install
+# Install Python dependencies
+RUN pip3 install --no-cache-dir numpy setuptools wheel twine
 
-# Install Abseil
-WORKDIR /tmp/abseil
-RUN git clone https://github.com/abseil/abseil-cpp.git \
-    && cd abseil-cpp \
-    && git checkout 20230125.3 \
-    && mkdir build && cd build \
-    && cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DCMAKE_CXX_STANDARD=17 \
-            -DABSL_ENABLE_INSTALL=ON \
-            -DABSL_PROPAGATE_CXX_STD=ON .. \
-    && make -j$(nproc) \
-    && make install \
+# Install DuckDB
+WORKDIR /tmp/duckdb
+RUN wget https://github.com/duckdb/duckdb/releases/download/v0.9.2/libduckdb-src.zip \
+    && wget https://github.com/duckdb/duckdb/releases/download/v0.9.2/libduckdb-linux-amd64.zip \
+    && unzip -o libduckdb-src.zip \
+    && unzip -o libduckdb-linux-amd64.zip \
+    && mkdir -p /usr/local/include \
+    && cp duckdb.hpp /usr/local/include/ \
+    && cp duckdb.h /usr/local/include/ \
+    && cp libduckdb.so /usr/local/lib/ \
     && ldconfig
 
 # Install Folly dependencies
@@ -68,17 +66,6 @@ RUN git clone https://github.com/facebook/folly && cd folly/build \
     && make install \
     && ldconfig
 
-# Install DuckDB
-WORKDIR /tmp/duckdb
-RUN git clone https://github.com/duckdb/duckdb.git \
-    && cd duckdb \
-    && mkdir build && cd build \
-    && cmake -DBUILD_SHARED_LIBS=ON \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON .. \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig
-
 # Copy source files
 WORKDIR /app
 COPY . .
@@ -87,34 +74,18 @@ COPY . .
 RUN sed -i '/if(APPLE)/,/endif()/d' CMakeLists.txt && \
     sed -i 's/if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")/if(FALSE)/g' CMakeLists.txt
 
-# Install pybind11 and other Python dependencies
-RUN pip3 install --no-cache-dir pybind11 numpy setuptools wheel twine
-
-# Update CMakeLists.txt to build the Python binding
-RUN echo 'find_package(pybind11 REQUIRED)' >> CMakeLists.txt && \
-    echo 'pybind11_add_module(logai_cpp src/python_bindings.cpp)' >> CMakeLists.txt && \
-    echo 'target_link_libraries(logai_cpp PRIVATE' >> CMakeLists.txt && \
-    echo '    nlohmann_json::nlohmann_json' >> CMakeLists.txt && \
-    echo '    spdlog::spdlog' >> CMakeLists.txt && \
-    echo '    Eigen3::Eigen' >> CMakeLists.txt && \
-    echo '    Folly::folly' >> CMakeLists.txt && \
-    echo '    ${Boost_LIBRARIES}' >> CMakeLists.txt && \
-    echo '    ZLIB::ZLIB' >> CMakeLists.txt && \
-    echo '    BZip2::BZip2' >> CMakeLists.txt && \
-    echo '    DuckDB::duckdb' >> CMakeLists.txt && \
-    echo ')' >> CMakeLists.txt && \
-    echo 'install(TARGETS logai_cpp DESTINATION python)' >> CMakeLists.txt
-
-# Build C++ library and Python module
+# Build C++ library and Python module with memory limits
 RUN mkdir -p build && cd build \
     && cmake -DCMAKE_BUILD_TYPE=Release \
              -DPYBIND11_PYTHON_VERSION=3 \
-             -DCMAKE_POSITION_INDEPENDENT_CODE=ON .. \
-    && make -j$(nproc) \
+             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+             -DCMAKE_CXX_FLAGS="-Wno-array-bounds" \
+             -DCMAKE_BUILD_PARALLEL_LEVEL=2 .. \
+    && make -j2 \
     && make install
 
-# Install Python dependencies needed for the agent
-RUN pip3 install --no-cache-dir pydantic openai instructor rich python-dotenv duckdb tqdm pandas numpy pydantic-ai
+# Install Python dependencies needed for the FastAPI server
+RUN pip3 install --no-cache-dir pydantic openai instructor rich python-dotenv duckdb tqdm pandas numpy pydantic-ai fastapi uvicorn python-multipart gunicorn google-generativeai anthropic
 
 # Create wheel package
 WORKDIR /app/python
@@ -124,6 +95,8 @@ RUN cp /app/build/logai_cpp*.so . && \
     echo "from .logai_cpp import *" > __init__.py && \
     # Ensure the logai_agent.py script is executable
     chmod +x logai_agent.py && \
+    # Ensure the logai_server.py script is executable
+    chmod +x logai_server.py && \
     # Build wheel package
     python3 setup.py bdist_wheel
 
@@ -136,6 +109,8 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev libboost-dev libjemalloc-dev \
     libgoogle-glog-dev libgflags-dev liblz4-dev \
     libspdlog-dev libfmt-dev \
+    libprotobuf-dev \
+    libgrpc++-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy built libraries from builder stage
@@ -159,21 +134,16 @@ COPY --from=builder /app/python/dist/*.whl /shared/wheels/
 WORKDIR /workspace
 RUN mkdir -p /workspace/logs /workspace/uploads
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-echo "LogAI C++ is available as both a library and CLI tool:"\n\
-echo "  - Run logai --help for C++ CLI usage"\n\
-echo "  - Run logai-agent --help for Python CLI usage"\n\
-echo ""\n\
-echo "Python wheel package is available at:"\n\
-echo "  /shared/wheels/$(ls /shared/wheels/)"\n\
-echo ""\n\
-echo "To use the Python CLI on your host machine:"\n\
-echo "  1. Copy the wheel file from container to host:"\n\
-echo "     docker cp logai-cpp-container:/shared/wheels/$(ls /shared/wheels/) ."\n\
-echo "  2. Install on host:"\n\
-echo "     pip install $(ls /shared/wheels/)"\n\
-echo ""\n\
-exec /bin/bash\n' > /start.sh && chmod +x /start.sh
+# Copy Python source files
+COPY --from=builder /app/python/*.py /workspace/
 
-CMD ["/start.sh"] 
+# Expose port for FastAPI server
+EXPOSE 8000
+
+# Set environment variables
+ENV PYTHONPATH=/workspace
+ENV MILVUS_HOST=milvus
+ENV MILVUS_PORT=19530
+
+# Run the FastAPI server
+CMD ["uvicorn", "logai_server:app", "--host", "0.0.0.0", "--port", "8000"] 

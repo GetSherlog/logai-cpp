@@ -9,7 +9,11 @@ namespace logai {
 class CsvParser : public LogParser {
 public:
     explicit CsvParser(const DataLoaderConfig& config);
-    LogRecordObject parse_line(std::string_view line) override;
+    ~CsvParser() noexcept override;
+    
+    LogEntry parse(const std::string& line) override;
+    bool validate(const std::string& line) override;
+    LogRecordObject parse_line(const std::string& line) override;
 
 private:
     DataLoaderConfig config_;

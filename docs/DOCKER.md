@@ -1,82 +1,73 @@
-# Docker Setup for LogAI-CPP
+# Docker Setup for LogAI C++
 
-## Quick Command
-
-```bash
-# Start the LogAI-CPP server and get anomaly detection tool
-./start.sh && open http://localhost:8080/anomaly_detection.html
-```
-
-This directory contains Docker configuration files to easily build and run the LogAI-CPP web server with the anomaly detection frontend.
-
-## Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
+This directory contains Docker configuration files to easily build and run the LogAI C++ web server.
 
 ## Quick Start
 
-The easiest way to start the LogAI-CPP web server is by using the provided script:
-
+1. Build the Docker image:
 ```bash
-./start.sh
+docker build -t logai-cpp .
 ```
 
-This script will:
-1. Build the Docker image (if not already built)
-2. Start the container
-3. Wait for the service to be healthy
-4. Display the URL to access the web interface
-
-## Manual Setup
-
-If you prefer to run the commands manually:
-
+2. Run the container:
 ```bash
-# Create required directories
-mkdir -p logs uploads
-
-# Build and start the containers
-docker-compose up --build -d
-
-# View logs
-docker-compose logs -f
-
-# Stop the service
-docker-compose down
+docker run -p 8080:8080 \
+  -e LOGAI_MILVUS_HOST=your-milvus-host \
+  -e LOGAI_MILVUS_PORT=19530 \
+  logai-cpp
 ```
 
-## Configuration
+3. Access the web interface:
+- Web Server: http://localhost:8080
+- API Documentation: http://localhost:8080/api/docs
 
-The default setup:
-- Exposes the web server on port 8080
-- Uses 16 worker threads
-- Mounts `./logs` and `./uploads` directories for persistent storage
+## Development Environment
 
-To change the port, edit the `docker-compose.yml` file and modify the port mapping.
+For development, you can use the development Dockerfile:
 
-## Accessing the Web Interface
+```bash
+# Build development image
+docker build -t logai-cpp-dev -f Dockerfile.dev .
 
-After starting the container, you can access:
+# Run development container
+docker run -it --name logai-cpp-dev \
+  -v "$(pwd):/workspace" \
+  -p 8080:8080 \
+  -e LOGAI_MILVUS_HOST=your-milvus-host \
+  -e LOGAI_MILVUS_PORT=19530 \
+  logai-cpp-dev
+```
 
-- Main page: http://localhost:8080/
-- Anomaly Detection Tool: http://localhost:8080/anomaly_detection.html
-- API Documentation: http://localhost:8080/web/swagger.json
+## Environment Variables
 
-## Troubleshooting
+- `LOGAI_HOST` - Server host (default: "0.0.0.0")
+- `LOGAI_PORT` - Server port (default: 8080)
+- `LOGAI_MILVUS_HOST` - Milvus host (default: "localhost")
+- `LOGAI_MILVUS_PORT` - Milvus port (default: 19530)
 
-If you encounter any issues:
+## Docker Compose
 
-1. Check the logs:
-   ```bash
-   docker-compose logs -f
-   ```
+For running with all dependencies (including Milvus):
 
-2. Ensure all dependencies are properly installed in the Dockerfile. If you need to add more dependencies, modify the Dockerfile and rebuild:
-   ```bash
-   docker-compose build --no-cache
-   ```
+```bash
+docker-compose up -d
+```
 
-3. Check if the port 8080 is already in use by another application. If so, modify the port mapping in `docker-compose.yml`.
+This will start:
+- LogAI C++ web server
+- Milvus vector database
+- Redis (for caching)
 
-4. Ensure Docker has enough resources allocated (memory, CPU). 
+## Building from Source
+
+To build the C++ library and Python bindings inside Docker:
+
+```bash
+# Build the library
+docker build -t logai-cpp-build -f Dockerfile.build .
+
+# Extract the wheel package
+docker run --rm -v "$(pwd)/wheels:/wheels" logai-cpp-build
+```
+
+The wheel package will be available in the `wheels` directory. 

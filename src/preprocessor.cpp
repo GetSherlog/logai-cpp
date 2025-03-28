@@ -305,13 +305,14 @@ Preprocessor::identify_timestamps(const LogRecordObject& logrecord) {
     }
     
     // Try to find timestamp in attributes
-    for (const auto& [key, value] : logrecord.attributes) {
+    for (const auto& [key, value] : logrecord.fields) {
         if (key == "timestamp" || key == "time" || key == "date" || 
             key == "datetime" || key == "created_at") {
             for (const auto& [regex_str, format] : timestamp_formats) {
                 std::regex regex_pattern(regex_str);
                 std::smatch match;
-                if (std::regex_search(value, match, regex_pattern)) {
+                std::string value_str = value.toStdString();
+                if (std::regex_search(value_str, match, regex_pattern)) {
                     std::istringstream ss(match.str());
                     std::tm tm = {};
                     ss >> std::get_time(&tm, format.c_str());

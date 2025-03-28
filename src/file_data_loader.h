@@ -22,8 +22,7 @@ namespace logai {
 /**
  * @brief Configuration for file data loader
  */
-struct FileDataLoaderConfig {
-    std::string file_path;
+struct FileDataLoaderConfig : public DataLoaderConfig {
     std::string encoding = "utf-8";
     std::string delimiter = ",";
     bool has_header = true;

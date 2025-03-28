@@ -18,7 +18,7 @@ namespace logai {
 
 namespace {
     // Regular expression for parsing CSV fields
-    const std::regex csv_regex{R"((?:^|,)(?:"([^"]*(?:""[^"]*)*)"|([^,]*)))"};
+    const std::regex csv_regex("(?:^|,)(?:\"([^\"]*(?:\"\"[^\"]*)*)\"|(.*?))(?=,|$)");
     
     // Split a CSV line into fields
     std::vector<std::string> splitCsvLine(const std::string& line) {
@@ -52,6 +52,8 @@ namespace {
 
 CsvParser::CsvParser(const DataLoaderConfig& config) : config_(config) {}
 
+CsvParser::~CsvParser() noexcept = default;
+
 // Helper function to parse timestamps based on format
 std::optional<std::chrono::system_clock::time_point> parse_timestamp(std::string_view timestamp, const std::string& format) {
     std::tm tm = {};
@@ -73,7 +75,7 @@ std::optional<std::chrono::system_clock::time_point> parse_timestamp(std::string
     return std::chrono::system_clock::from_time_t(time);
 }
 
-LogRecordObject CsvParser::parse_line(std::string_view line) {
+LogRecordObject CsvParser::parse_line(const std::string&  line) {
     LogRecordObject record;
     std::vector<std::string_view> fields = split_line(line);
 
@@ -89,8 +91,8 @@ LogRecordObject CsvParser::parse_line(std::string_view line) {
         } else if (dimension == "severity") {
             record.severity = std::string(field);
         } else {
-            // Use unordered_map for attributes instead of using vector indexing
-            record.attributes.insert({dimension, std::string(field)});
+            // Use set_field method instead of attributes map
+            record.set_field(dimension, std::string(field));
         }
     }
 
@@ -133,108 +135,20 @@ std::vector<std::string_view> CsvParser::split_line(std::string_view line, char 
 }
 
 LogParser::LogEntry CsvParser::parse(const std::string& line) {
-    LogEntry entry;
-    
+    LogParser::LogEntry entry;
     try {
-        std::vector<std::string> fields = splitCsvLine(line);
+        // Use the existing parse_line implementation to get the LogRecordObject
+        LogRecordObject record = parse_line(line);
         
-        if (fields.empty()) {
-            throw std::runtime_error("Empty CSV line");
+        // Convert LogRecordObject to LogEntry
+        entry.timestamp = record.timestamp ? std::to_string(record.timestamp->time_since_epoch().count()) : "";
+        entry.level = record.severity.value_or("");
+        entry.message = record.body;
+        
+        // Copy fields to entry.fields
+        for (const auto& [key, value] : record.fields) {
+            entry.fields[key.toStdString()] = value.toStdString();
         }
-        
-        // Try to identify fields based on header or content
-        for (size_t i = 0; i < fields.size(); ++i) {
-            const std::string& field = fields[i];
-            
-            // Skip empty fields
-            if (field.empty()) {
-                continue;
-            }
-            
-            // Try to identify timestamp field
-            if (entry.timestamp.empty()) {
-                std::tm tm = {};
-                std::istringstream ss(field);
-                
-                // Try various timestamp formats
-                bool isTimestamp = false;
-                
-                // Try ISO 8601
-                if (field.find('T') != std::string::npos) {
-                    entry.timestamp = field;
-                    isTimestamp = true;
-                }
-                // Try YYYY-MM-DD HH:MM:SS
-                else if (ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S")) {
-                    std::stringstream out;
-                    out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S.000Z");
-                    entry.timestamp = out.str();
-                    isTimestamp = true;
-                }
-                // Try MM/DD/YYYY HH:MM:SS
-                else {
-                    ss.clear();
-                    ss.str(field);
-                    if (ss >> std::get_time(&tm, "%m/%d/%Y %H:%M:%S")) {
-                        std::stringstream out;
-                        out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S.000Z");
-                        entry.timestamp = out.str();
-                        isTimestamp = true;
-                    }
-                }
-                
-                if (isTimestamp) {
-                    continue;
-                }
-            }
-            
-            // Try to identify log level field
-            if (entry.level.empty()) {
-                std::string upperField = field;
-                std::transform(upperField.begin(), upperField.end(), upperField.begin(), ::toupper);
-                
-                if (upperField == "DEBUG" || upperField == "INFO" || 
-                    upperField == "WARN" || upperField == "WARNING" ||
-                    upperField == "ERROR" || upperField == "FATAL" ||
-                    upperField == "CRITICAL") {
-                    entry.level = upperField;
-                    continue;
-                }
-            }
-            
-            // Try to identify message field (usually the longest field)
-            if (entry.message.empty() && field.length() > 20) {
-                entry.message = field;
-                continue;
-            }
-            
-            // Store other fields with column index as key
-            entry.fields["field_" + std::to_string(i)] = field;
-        }
-        
-        // Set default values if not found
-        if (entry.timestamp.empty()) {
-            auto now = std::chrono::system_clock::now();
-            auto now_time_t = std::chrono::system_clock::to_time_t(now);
-            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()).count() % 1000;
-            
-            std::stringstream ss;
-            ss << std::put_time(std::gmtime(&now_time_t), "%Y-%m-%dT%H:%M:%S")
-               << '.' << std::setfill('0') << std::setw(3) << now_ms
-               << 'Z';
-            
-            entry.timestamp = ss.str();
-        }
-        
-        if (entry.level.empty()) {
-            entry.level = "INFO";
-        }
-        
-        if (entry.message.empty() && !fields.empty()) {
-            entry.message = fields[0];
-        }
-        
     } catch (const std::exception& e) {
         throw std::runtime_error("Failed to parse CSV line: " + std::string(e.what()));
     }
@@ -244,9 +158,10 @@ LogParser::LogEntry CsvParser::parse(const std::string& line) {
 
 bool CsvParser::validate(const std::string& line) {
     try {
-        std::vector<std::string> fields = splitCsvLine(line);
-        return !fields.empty();
-    } catch (...) {
+        // Try to parse the line to validate it
+        parse_line(line);
+        return true;
+    } catch (const std::exception&) {
         return false;
     }
 }

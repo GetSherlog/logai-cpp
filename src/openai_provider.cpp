@@ -30,36 +30,36 @@ bool OpenAIProvider::init(const std::string& config_json) {
         // Determine API format
         std::string format = j.value("api_format", "openai");
         if (format == "openai") {
-            config->api_format = APIFormat::OPENAI;
+            (*config)->api_format = APIFormat::OPENAI;
         } else if (format == "ollama") {
-            config->api_format = APIFormat::OLLAMA;
+            (*config)->api_format = APIFormat::OLLAMA;
         } else if (format == "gemini") {
-            config->api_format = APIFormat::GEMINI;
+            (*config)->api_format = APIFormat::GEMINI;
         } else if (format == "custom") {
-            config->api_format = APIFormat::CUSTOM;
+            (*config)->api_format = APIFormat::CUSTOM;
         } else {
             spdlog::error("Unknown API format: {}", format);
             return false;
         }
         
         // Set configuration parameters
-        config->api_key = j.value("api_key", "");
-        config->model = j.value("model", "gpt-3.5-turbo");
-        config->endpoint = j.value("endpoint", "");
-        config->response_field_path = j.value("response_field_path", "");
-        config->timeout_ms = j.value("timeout_ms", 30000);
+        (*config)->api_key = j.value("api_key", "");
+        (*config)->model = j.value("model", "gpt-3.5-turbo");
+        (*config)->endpoint = j.value("endpoint", "");
+        (*config)->response_field_path = j.value("response_field_path", "");
+        (*config)->timeout_ms = j.value("timeout_ms", 30000);
         
         // Set default endpoints based on API format
-        if (config->endpoint.empty()) {
-            switch (config->api_format) {
+        if ((*config)->endpoint.empty()) {
+            switch ((*config)->api_format) {
                 case APIFormat::OPENAI:
-                    config->endpoint = "https://api.openai.com/v1/chat/completions";
+                    (*config)->endpoint = "https://api.openai.com/v1/chat/completions";
                     break;
                 case APIFormat::OLLAMA:
-                    config->endpoint = "http://localhost:11434/api/generate";
+                    (*config)->endpoint = "http://localhost:11434/api/generate";
                     break;
                 case APIFormat::GEMINI:
-                    config->endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + config->model + ":generateContent";
+                    (*config)->endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + (*config)->model + ":generateContent";
                     break;
                 case APIFormat::CUSTOM:
                     spdlog::error("Custom API format requires an endpoint");
@@ -68,16 +68,16 @@ bool OpenAIProvider::init(const std::string& config_json) {
         }
         
         // Set default response field paths
-        if (config->response_field_path.empty()) {
-            switch (config->api_format) {
+        if ((*config)->response_field_path.empty()) {
+            switch ((*config)->api_format) {
                 case APIFormat::OPENAI:
-                    config->response_field_path = "choices.0.message.content";
+                    (*config)->response_field_path = "choices.0.message.content";
                     break;
                 case APIFormat::OLLAMA:
-                    config->response_field_path = "response";
+                    (*config)->response_field_path = "response";
                     break;
                 case APIFormat::GEMINI:
-                    config->response_field_path = "candidates.0.content.parts.0.text";
+                    (*config)->response_field_path = "candidates.0.content.parts.0.text";
                     break;
                 case APIFormat::CUSTOM:
                     spdlog::error("Custom API format requires a response_field_path");
@@ -85,7 +85,7 @@ bool OpenAIProvider::init(const std::string& config_json) {
             }
         }
         
-        spdlog::info("Initialized LLM provider: {} with model: {}", format, config->model);
+        spdlog::info("Initialized LLM provider: {} with model: {}", format, (*config)->model);
         return true;
     } catch (const std::exception& e) {
         spdlog::error("Failed to initialize LLM provider: {}", e.what());
@@ -95,7 +95,7 @@ bool OpenAIProvider::init(const std::string& config_json) {
 
 std::string OpenAIProvider::get_model_name() const {
     auto config = config_.rlock();
-    return config->model;
+    return (*config)->model;
 }
 
 std::string OpenAIProvider::generate_cache_key(const std::string& prompt, const std::string& system_prompt) {
@@ -105,7 +105,7 @@ std::string OpenAIProvider::generate_cache_key(const std::string& prompt, const 
 std::string OpenAIProvider::build_request(const std::string& prompt, const std::string& system_prompt) {
     auto config = config_.rlock();
     
-    switch (config->api_format) {
+    switch ((*config)->api_format) {
         case APIFormat::OPENAI:
             return build_openai_request(prompt, system_prompt);
         case APIFormat::OLLAMA:
@@ -124,7 +124,7 @@ std::string OpenAIProvider::build_openai_request(const std::string& prompt, cons
     auto config = config_.rlock();
     
     json request;
-    request["model"] = config->model;
+    request["model"] = (*config)->model;
     request["messages"] = json::array();
     
     if (!system_prompt.empty()) {
@@ -146,7 +146,7 @@ std::string OpenAIProvider::build_ollama_request(const std::string& prompt, cons
     auto config = config_.rlock();
     
     json request;
-    request["model"] = config->model;
+    request["model"] = (*config)->model;
     request["prompt"] = prompt;
     
     if (!system_prompt.empty()) {
@@ -185,7 +185,7 @@ std::string OpenAIProvider::build_custom_request(const std::string& prompt, cons
     auto config = config_.rlock();
     
     json request;
-    request["model"] = config->model;
+    request["model"] = (*config)->model;
     request["prompt"] = prompt;
     
     if (!system_prompt.empty()) {
@@ -202,7 +202,7 @@ std::string OpenAIProvider::extract_response(const std::string& json_response) {
         
         // Split the response_field_path by dots
         std::vector<std::string> path_parts;
-        std::string path = config->response_field_path;
+        std::string path = (*config)->response_field_path;
         std::regex re("\\.");
         std::sregex_token_iterator it(path.begin(), path.end(), re, -1);
         std::sregex_token_iterator end;
@@ -248,19 +248,24 @@ std::string OpenAIProvider::extract_response(const std::string& json_response) {
 std::optional<std::string> OpenAIProvider::generate(
     const std::string& prompt,
     const std::string& system_prompt) {
-    
-    // Check cache first
-    std::string cache_key = generate_cache_key(prompt, system_prompt);
-    {
-        auto cache = response_cache_.rlock();
-        auto it = cache->find(cache_key);
-        if (it != cache->end()) {
-            return it->second;
-        }
-    }
-    
     try {
         auto config = config_.rlock();
+        std::string cache_key = generate_cache_key(prompt, system_prompt);
+        
+        // Check cache first
+        auto response_cache = response_cache_.rlock();
+        auto cache_it = response_cache->find(cache_key);
+        if (cache_it != response_cache->end()) {
+            spdlog::debug("Using cached response for prompt: {}", prompt.substr(0, 30));
+            return cache_it->second;
+        }
+        response_cache.unlock();
+        
+        // Build request body
+        std::string request_body = build_request(prompt, system_prompt);
+        if (request_body.empty()) {
+            return std::nullopt;
+        }
         
         // Initialize CURL
         CURL* curl = curl_easy_init();
@@ -269,72 +274,61 @@ std::optional<std::string> OpenAIProvider::generate(
             return std::nullopt;
         }
         
-        // Build request payload
-        std::string request_payload = build_request(prompt, system_prompt);
+        // Set response data
+        std::string response_data;
         
-        // Set up CURL options
-        std::string response;
+        // Set headers
         struct curl_slist* headers = nullptr;
         headers = curl_slist_append(headers, "Content-Type: application/json");
         
-        if (!config->api_key.empty()) {
-            std::string auth_header;
-            if (config->api_format == APIFormat::OPENAI) {
-                auth_header = "Authorization: Bearer " + config->api_key;
-            } else if (config->api_format == APIFormat::GEMINI) {
-                auth_header = "x-goog-api-key: " + config->api_key;
+        // Set authentication if needed
+        std::string auth_header;
+        if (!(*config)->api_key.empty()) {
+            // Different API providers use different auth header formats
+            if ((*config)->api_format == APIFormat::OPENAI) {
+                auth_header = "Authorization: Bearer " + (*config)->api_key;
+            } else if ((*config)->api_format == APIFormat::GEMINI) {
+                auth_header = "x-goog-api-key: " + (*config)->api_key;
             } else {
-                auth_header = "Authorization: Bearer " + config->api_key;
+                auth_header = "Authorization: Bearer " + (*config)->api_key;
             }
             headers = curl_slist_append(headers, auth_header.c_str());
         }
         
-        curl_easy_setopt(curl, CURLOPT_URL, config->endpoint.c_str());
+        // Set CURL options
+        curl_easy_setopt(curl, CURLOPT_URL, (*config)->endpoint.c_str());
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_payload.c_str());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_body.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config->timeout_ms);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, (*config)->timeout_ms);
         
         // Perform request
         CURLcode res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            spdlog::error("CURL request failed: {}", curl_easy_strerror(res));
-            curl_slist_free_all(headers);
-            curl_easy_cleanup(curl);
-            return std::nullopt;
-        }
         
-        // Check HTTP response code
-        long http_code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-        if (http_code != 200) {
-            spdlog::error("HTTP request failed with code {}: {}", http_code, response);
-            curl_slist_free_all(headers);
-            curl_easy_cleanup(curl);
-            return std::nullopt;
-        }
-        
-        // Clean up CURL
+        // Clean up
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
         
-        // Extract text from response
-        std::string text = extract_response(response);
-        if (text.empty()) {
-            spdlog::error("Failed to extract text from response");
+        if (res != CURLE_OK) {
+            spdlog::error("CURL request failed: {}", curl_easy_strerror(res));
             return std::nullopt;
         }
         
-        // Cache the result
-        {
-            auto cache = response_cache_.wlock();
-            (*cache)[cache_key] = text;
+        // Extract response
+        std::string extracted = extract_response(response_data);
+        if (extracted.empty()) {
+            spdlog::error("Failed to extract response from API");
+            return std::nullopt;
         }
         
-        return text;
+        // Cache response
+        auto write_cache = response_cache_.wlock();
+        (*write_cache)[cache_key] = extracted;
+        
+        return extracted;
     } catch (const std::exception& e) {
-        spdlog::error("Failed to generate response: {}", e.what());
+        spdlog::error("Error generating response: {}", e.what());
         return std::nullopt;
     }
 }

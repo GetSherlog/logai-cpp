@@ -7,6 +7,10 @@
 #include <chrono>
 #include <optional>
 #include <folly/FBString.h>
+#include <sstream>
+#include <iomanip>
+#include <folly/container/F14Map.h>
+#include "log_record.h"
 
 namespace logai {
 
@@ -23,8 +27,22 @@ public:
 
         LogRecordObject to_record_object() const {
             LogRecordObject record;
+            record.body = message;
             for (const auto& [key, value] : fields) {
                 record.fields[folly::fbstring(key)] = folly::fbstring(value);
+            }
+            if (!timestamp.empty()) {
+                try {
+                    // Parse ISO 8601 timestamp
+                    std::tm tm = {};
+                    std::stringstream ss(timestamp);
+                    ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
+                    if (!ss.fail()) {
+                        record.timestamp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+                    }
+                } catch (const std::exception&) {
+                    // If parsing fails, just ignore the timestamp
+                }
             }
             return record;
         }

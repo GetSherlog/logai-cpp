@@ -2,7 +2,8 @@
 // drain_parser.cpp
 // ============================================================================
 #include "drain_parser.h"
-#include "log_record_object.h"
+#include "log_record.h"
+#include "data_loader_config.h"
 
 #include <algorithm>
 #include <atomic>
@@ -31,7 +32,7 @@ constexpr char WILDCARD[] = "<*>";
 
 namespace detail {
 
-using TokenVector = folly::small_vector<std::string_view, 32>;
+using TokenVector = folly::small_vector<std::string_view, 8>;
 
 TokenVector tokenize(std::string_view str, char delimiter = ' ') {
     TokenVector tokens;
@@ -137,6 +138,7 @@ struct LogCluster {
     std::string log_template;
     detail::TokenVector tokens;
     folly::F14FastSet<size_t> parameter_indices;
+    std::vector<std::pair<std::string, std::string>> attributes;
 
     explicit LogCluster(int id_, const detail::TokenVector& tok)
         : id(id_), tokens(tok)
@@ -196,6 +198,9 @@ public:
         record.template_str = matched_cluster->log_template;
         record.fields["cluster_id"] = std::to_string(matched_cluster->id);
 
+        // Extract attributes from the log line
+        extract_attributes(tokens, matched_cluster->parameter_indices, matched_cluster->attributes);
+
         // Possibly extract more metadata from line or user_cfg
         extract_metadata(line, record, user_cfg);
         return record;
@@ -212,7 +217,7 @@ public:
         auto it = record.fields.find("cluster_id");
         if (it != record.fields.end()) {
             try {
-                return std::stoi(it->second);
+                return std::stoi(it->second.toStdString());
             } catch (const std::exception& e) {
                 spdlog::error("Error converting cluster_id: {}", e.what());
             }
@@ -239,6 +244,15 @@ public:
         return std::nullopt;
     }
 
+    std::vector<std::pair<std::string, std::string>> get_template_attributes(int cluster_id) const {
+        auto clusters = clusters_.rlock();
+        auto it = clusters->find(cluster_id);
+        if (it != clusters->end()) {
+            return it->second->attributes;
+        }
+        return {};
+    }
+
     void set_preprocess_patterns(const std::vector<std::string>& pattern_strings) {
         std::vector<std::regex> patterns;
         patterns.reserve(pattern_strings.size());
@@ -253,12 +267,8 @@ public:
     }
 
     folly::F14FastMap<int, std::string> get_all_templates() const {
-        folly::F14FastMap<int, std::string> result;
         auto tmpl_map = templates_.rlock();
-        for (const auto& [id, tmpl] : *tmpl_map) {
-            result[id] = tmpl;
-        }
-        return result;
+        return *tmpl_map;
     }
 
 private:
@@ -512,6 +522,18 @@ private:
         }
     }
 
+    void extract_attributes(const detail::TokenVector& tokens,
+                          const folly::F14FastSet<size_t>& parameter_indices,
+                          std::vector<std::pair<std::string, std::string>>& attributes) {
+        attributes.clear();
+        for (size_t idx : parameter_indices) {
+            if (idx < tokens.size()) {
+                std::string attr_name = "param_" + std::to_string(idx);
+                attributes.emplace_back(attr_name, std::string(tokens[idx]));
+            }
+        }
+    }
+
 private:
     // A thread-safe structure for the DRAIN configuration:
     folly::Synchronized<DrainConfig> drain_config_{{
@@ -526,25 +548,54 @@ private:
 
     // Thread-safe map of id -> template
     folly::Synchronized<folly::F14FastMap<int, std::string>> templates_;
+
+    folly::Synchronized<folly::F14FastMap<int, std::shared_ptr<LogCluster>>> clusters_;
 };
 
 // ============================================================================
 // DrainParser methods
 // ============================================================================
 
-DrainParser::DrainParser(const DataLoaderConfig& config,
-                         int depth,
-                         double similarity_threshold,
-                         int max_children)
-    : impl_(std::make_unique<DrainParserImpl>(depth, similarity_threshold, max_children)),
-      user_config_(config)
+DrainParser::DrainParser(const DataLoaderConfig& config)
+    : user_config_(config),
+      impl_(std::make_unique<DrainParserImpl>(
+          config.drain_depth,
+          config.drain_similarity_threshold,
+          config.drain_max_children))
 {
 }
 
-DrainParser::~DrainParser() = default;
+DrainParser::~DrainParser() noexcept = default;
 
-LogRecordObject DrainParser::parse_line(std::string_view line) {
-    // We pass the user’s config in, in case metadata extraction needs it
+LogParser::LogEntry DrainParser::parse(const std::string& line) {
+    LogParser::LogEntry entry;
+    entry.message = line;  // Store the raw line as message
+    auto record = parse_line(line);
+    
+    // Convert LogRecordObject to LogEntry fields
+    for (const auto& [key, value] : record.fields) {
+        entry.fields[std::string(key)] = std::string(value);
+    }
+    
+    // Try to extract timestamp and level if available
+    auto ts_it = record.fields.find("detected_timestamp");
+    if (ts_it != record.fields.end()) {
+        entry.timestamp = std::string(ts_it->second);
+    }
+    
+    auto level_it = record.fields.find("level");
+    if (level_it != record.fields.end()) {
+        entry.level = std::string(level_it->second);
+    }
+    
+    return entry;
+}
+
+bool DrainParser::validate(const std::string& line) {
+    return !line.empty();
+}
+
+LogRecordObject DrainParser::parse_line(const std::string& line) {
     return impl_->parse(line, user_config_);
 }
 
@@ -566,6 +617,10 @@ std::optional<std::string> DrainParser::get_template_for_cluster_id(int cluster_
 
 int DrainParser::get_cluster_id_for_log(std::string_view line) const {
     return impl_->get_cluster_id_for_log(line);
+}
+
+std::vector<std::pair<std::string, std::string>> DrainParser::get_template_attributes(int cluster_id) const {
+    return impl_->get_template_attributes(cluster_id);
 }
 
 folly::F14FastMap<int, std::string> DrainParser::get_all_templates() const {

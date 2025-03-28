@@ -9,7 +9,38 @@ std::optional<std::chrono::system_clock::time_point> parse_timestamp(std::string
 RegexParser::RegexParser(const DataLoaderConfig& config, const std::string& pattern)
     : config_(config), pattern_(pattern) {}
 
-LogRecordObject RegexParser::parse_line(std::string_view line) {
+LogEntry RegexParser::parse(const std::string& line) {
+    LogEntry entry;
+    try {
+        // Use the existing parse_line implementation to get the LogRecordObject
+        LogRecordObject record = parse_line(line);
+        
+        // Convert LogRecordObject to LogEntry
+        entry.timestamp = record.timestamp ? std::to_string(record.timestamp->time_since_epoch().count()) : "";
+        entry.level = record.severity;
+        entry.message = record.body;
+        
+        // Copy attributes to fields
+        for (const auto& [key, value] : record.attributes) {
+            entry.fields[std::string(key)] = std::string(value);
+        }
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to parse log line: " + std::string(e.what()));
+    }
+    
+    return entry;
+}
+
+bool RegexParser::validate(const std::string& line) {
+    try {
+        std::smatch matches;
+        return std::regex_match(line, matches, pattern_);
+    } catch (const std::regex_error&) {
+        return false;
+    }
+}
+
+LogRecordObject RegexParser::parse_line(const std::string& line) {
     LogRecordObject record;
     std::string line_str(line);  // Convert to string for regex
     std::smatch matches;

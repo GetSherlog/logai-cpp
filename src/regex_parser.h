@@ -9,7 +9,10 @@ namespace logai {
 class RegexParser : public LogParser {
 public:
     RegexParser(const DataLoaderConfig& config, const std::string& pattern);
-    LogRecordObject parse_line(std::string_view line) override;
+    
+    LogEntry parse(const std::string& line) override;
+    bool validate(const std::string& line) override;
+    LogRecordObject parse_line(const std::string& line) override;
 
 private:
     const DataLoaderConfig& config_;

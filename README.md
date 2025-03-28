@@ -1,114 +1,131 @@
 # LogAI C++
 
-A C++ library for log analysis with Python bindings.
+A high-performance C++ library for log analysis, focusing on template extraction and storage. This module is responsible for:
 
-## Overview
+- Log parsing and template extraction using DRAIN algorithm
+- Template storage in Milvus for efficient similarity search
+- Log attribute storage in DuckDB for structured querying
 
-LogAI C++ provides tools for log analysis, template extraction, clustering, and anomaly detection. It includes:
+The C++ module is designed to be fast and efficient, handling the core responsibilities of log parsing and storage. Higher-level analysis features are handled by the Python AI agent.
 
-- Drain parser for log template extraction
-- Vector embedding generation
-- Clustering algorithms (DBSCAN)
-- Anomaly detection (One-Class SVM)
-- DuckDB integration for storage and queries
-- Direct Python bindings for cross-platform usage
+## Features
 
-## Simplified Architecture
+- High-performance log parsing
+- Template extraction using DRAIN algorithm
+- Template storage in Milvus for vector similarity search
+- Structured log attribute storage in DuckDB
+- Python bindings for easy integration
+- FastAPI server for API access to log analysis functionality
 
-This project uses a streamlined approach:
+## Dependencies
 
-1. C++ core library for high-performance log processing
-2. Direct Python bindings using pybind11 (no wrapper layer)
-3. Python CLI tool that uses the bindings directly
-4. Docker-based build system that creates a portable wheel package
+- C++17 or later
+- CMake 3.15 or later
+- DuckDB
+- Milvus
+- Folly
+- nlohmann/json
+- pybind11 (for Python bindings)
 
-This architecture maximizes performance by eliminating unnecessary layers between the Python CLI and C++ core.
-
-## Quick Start
-
-### Build and Install
-
-Simply run the build script:
-
-```bash
-./build_and_run.sh
-```
-
-This script will:
-1. Build the Docker image with the C++ library and Python bindings
-2. Extract the wheel package to the `./wheels` directory
-3. Provide instructions for installing and using the CLI
-
-### Using the Python CLI on Your Host Machine
-
-After the build completes:
-
-1. Install the wheel package:
-   ```bash
-   pip install ./wheels/logai_cpp-*.whl
-   ```
-
-2. Configure your LLM provider:
-
-   **For OpenAI (default):**
-   ```bash
-   export LLM_PROVIDER=openai
-   export OPENAI_API_KEY=your_api_key_here
-   export OPENAI_MODEL=gpt-4o  # Optional, defaults to gpt-4o
-   ```
-
-   **For Google Gemini:**
-   ```bash
-   export LLM_PROVIDER=gemini
-   export GEMINI_API_KEY=your_api_key_here
-   export GEMINI_MODEL=gemini-pro  # Optional
-   ```
-
-   **For Ollama (local LLMs):**
-   ```bash
-   export LLM_PROVIDER=ollama
-   export OLLAMA_ENDPOINT=http://localhost:11434/api/generate
-   export OLLAMA_MODEL=llama3  # Specify your Ollama model
-   ```
-
-3. Run the CLI tool:
-   ```bash
-   logai-agent --log-file path/to/your/logfile.log
-   ```
-
-## Example Commands
+## Building
 
 ```bash
-# Extract log templates
-logai-agent extract --log-file logs/example.log
+# Clone the repository
+git clone https://github.com/yourusername/logai-cpp.git
+cd logai-cpp
 
-# Cluster logs
-logai-agent cluster --log-file logs/example.log
+# Create build directory
+mkdir build && cd build
 
-# Detect anomalies
-logai-agent anomaly --log-file logs/example.log
+# Configure with CMake
+cmake ..
 
-# Interactive analysis
-logai-agent analyze --log-file logs/example.log
+# Build
+make -j8
 ```
 
-## Docker Development Environment (Optional)
+## Running with Docker
 
-If you want to run the tools inside a Docker container for development:
+The easiest way to run LogAI is using Docker Compose:
 
 ```bash
-docker run -it --name logai-cpp-container \
-  -v "$(pwd):/workspace" \
-  -v "$(pwd)/logs:/workspace/logs" \
-  -v "$(pwd)/uploads:/workspace/uploads" \
-  -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
-  -e LLM_PROVIDER="${LLM_PROVIDER}" \
-  -e GEMINI_API_KEY="${GEMINI_API_KEY}" \
-  -e OLLAMA_ENDPOINT="${OLLAMA_ENDPOINT}" \
-  -e OLLAMA_MODEL="${OLLAMA_MODEL}" \
-  logai-cpp
+# Copy the example environment file and modify as needed
+cp .env.example .env
+
+# Edit .env and add your API keys
+nano .env
+
+# Start the services
+docker-compose up -d
 ```
+
+This will start:
+- The LogAI FastAPI server on port 8000
+- Milvus vector database
+- Required supporting services
+
+## API Usage
+
+Once the server is running, you can access the OpenAPI documentation at:
+
+```
+http://localhost:8000/docs
+```
+
+Key API endpoints:
+
+- `POST /api/configure` - Configure the AI agent
+- `POST /api/initialize` - Initialize with a log file
+- `POST /api/upload-log-file` - Upload and parse a log file
+- `POST /api/search` - Search logs with a pattern
+- `POST /api/execute-query` - Execute SQL queries against log data
+- `GET /api/statistics` - Get statistics about the loaded logs
 
 ## Python Integration
 
-The Python module `logai_cpp` provides direct bindings to the C++ library with no intermediate wrapper layer, ensuring maximum performance. See the `python/examples` directory for sample code. 
+The C++ module provides Python bindings for easy integration:
+
+```python
+import logai_cpp
+
+# Parse a log file
+logai_cpp.parse_log_file("logs/example.log")
+
+# Extract templates
+templates = logai_cpp.extract_templates()
+
+# Store templates in Milvus
+logai_cpp.store_templates_in_milvus()
+
+# Store attributes in DuckDB
+logai_cpp.store_attributes_in_duckdb()
+```
+
+### Using the FastAPI client
+
+You can also use the REST API from any programming language:
+
+```python
+import requests
+
+# Configure the agent
+response = requests.post("http://localhost:8000/api/configure", json={
+    "provider": "openai",
+    "api_key": "your-api-key"
+})
+
+# Initialize with a log file
+response = requests.post("http://localhost:8000/api/initialize", json={
+    "log_file": "/path/to/logfile.log"
+})
+
+# Search logs
+response = requests.post("http://localhost:8000/api/search", json={
+    "query": "error",
+    "limit": 10
+})
+```
+
+## License
+
+MIT License 

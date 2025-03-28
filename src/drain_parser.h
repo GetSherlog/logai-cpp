@@ -3,14 +3,15 @@
 // ============================================================================
 #pragma once
 
-#include "log_parser.h"
-#include "data_loader_config.h"
-
 #include <string>
 #include <vector>
-#include <unordered_set>
-#include <optional>
 #include <memory>
+#include <optional>
+#include <folly/FBString.h>
+#include <folly/container/F14Map.h>
+#include <folly/container/F14Set.h>
+#include "log_parser.h"
+#include "data_loader_config.h"
 
 namespace logai {
 
@@ -38,7 +39,7 @@ public:
     }
 
 private:
-    std::unordered_set<std::string> pool_;
+    folly::F14FastSet<std::string> pool_;
 };
 
 /**
@@ -48,25 +49,15 @@ class DrainParser : public LogParser {
 public:
     /**
      * Constructor for DrainParser
-     * 
-     * @param config The data loader configuration
-     * @param depth The maximum depth of the parse tree (default: 4)
-     * @param similarity_threshold The similarity threshold for grouping logs (default: 0.5)
-     * @param max_children The maximum number of children per node (default: 100)
+     * @param config Configuration for the parser
      */
-    DrainParser(const DataLoaderConfig& config,
-                int depth = 4,
-                double similarity_threshold = 0.5,
-                int max_children = 100);
+    explicit DrainParser(const DataLoaderConfig& config);
+    ~DrainParser() override;
 
-    /**
-     * Destructor
-     */
-    ~DrainParser() noexcept;
+    // Implement pure virtual methods from LogParser
+    LogParser::LogEntry parse(const std::string& line) override;
+    bool validate(const std::string& line) override;
 
-    /**
-     * Parse a log line using the DRAIN algorithm
-     */
     LogRecordObject parse_line(const std::string& line) override;
 
     /**
@@ -104,12 +95,24 @@ public:
      */
     std::optional<int> get_cluster_id_from_record(const LogRecordObject& record) const;
 
+    /**
+     * Get template attributes for a cluster ID
+     */
+    std::vector<std::pair<std::string, std::string>> get_template_attributes(int cluster_id) const;
+
+    /**
+     * Get all templates (alias for get_all_templates for backward compatibility)
+     */
+    folly::F14FastMap<int, std::string> get_templates() const {
+        return get_all_templates();
+    }
+
 private:
     // Implementation (PIMPL)
     std::unique_ptr<DrainParserImpl> impl_;
 
-    // Store the user’s DataLoaderConfig reference (if you need it in the future)
-    const DataLoaderConfig& user_config_;
+    // Store the user's DataLoaderConfig reference
+    DataLoaderConfig user_config_;
 };
 
 } // namespace logai

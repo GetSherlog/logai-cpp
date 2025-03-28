@@ -10,7 +10,7 @@ The LogAI Python module is designed as a direct interface to the high-performanc
    - Fast log parsing with customizable parsers
    - Template extraction using the Drain algorithm
    - High-performance data storage and querying with DuckDB
-   - Vector embeddings and clustering capabilities
+   - Vector embeddings and similarity search with Milvus
 
 2. **Python Interface**:
    - Direct binding to the C++ library using pybind11
@@ -22,7 +22,7 @@ The LogAI Python module is designed as a direct interface to the high-performanc
 
 - **DuckDB Store**: Efficient SQL-based storage and querying of log data
 - **Drain Parser**: Extract log templates from raw logs
-- **Template Store**: Manage and search log templates
+- **Milvus Store**: Vector similarity search for log templates
 - **Vector Embeddings**: Generate and manage embeddings for logs
 - **Clustering**: Find patterns in log data
 
@@ -31,54 +31,41 @@ The LogAI Python module is designed as a direct interface to the high-performanc
 ```python
 import logai_cpp
 
-# Initialize components
-parser = logai_cpp.DrainParser()
-template_store = logai_cpp.TemplateStore()
-duckdb_store = logai_cpp.DuckDBStore()
+# Initialize stores
+logai_cpp.init_duckdb()  # Initialize DuckDB for structured data storage
+logai_cpp.init_milvus("localhost", 19530)  # Initialize Milvus for vector search
 
 # Parse a log file
-parsed_logs = parser.parse_file("path/to/logs.log")
+# This will automatically store data in both DuckDB and Milvus
+parsed_logs = logai_cpp.parse_log_file("path/to/logs.log")
 
-# Extract templates
-for log in parsed_logs:
-    template_id = log["template_id"]
-    template_str = log["template"]
-    template_store.add_template(template_id, template_str, log)
-
-# Create a table in DuckDB for efficient querying
-columns = ["timestamp", "level", "component", "message"]
-types = ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR"]
-duckdb_store.init_template_table("template1", columns, types)
-
-# Query logs
-results = duckdb_store.execute_query("SELECT * FROM template1 WHERE level = 'ERROR'")
+# Query structured data from DuckDB
+results = logai_cpp.execute_query("SELECT * FROM logs WHERE level = 'ERROR'")
 
 # Convert to pandas DataFrame for analysis
 import pandas as pd
 df = pd.DataFrame(results[1:], columns=results[0])
+
+# Search for similar templates using Milvus
+similar_templates = logai_cpp.search_similar_templates(query_embedding, top_k=5)
 ```
 
 ## Using with pandas
 
 ```python
-from logai_cpp import DrainParser, DuckDBStore
+from logai_cpp import init_duckdb, init_milvus, parse_log_file, execute_query
 import pandas as pd
 
 # Initialize LogAI components
-parser = DrainParser()
-store = DuckDBStore()
+init_duckdb()
+init_milvus("localhost", 19530)
 
-# Parse logs
-parsed_logs = parser.parse_file("logs.log")
-
-# Set up DuckDB table
-columns = ["timestamp", "level", "message"]
-types = ["VARCHAR", "VARCHAR", "VARCHAR"]
-store.init_template_table("logs", columns, types)
+# Parse logs and store in both DuckDB and Milvus
+parse_log_file("logs.log")
 
 # Execute a query and convert to pandas DataFrame
 query = "SELECT * FROM logs WHERE level = 'ERROR'"
-results = store.execute_query(query)
+results = execute_query(query)
 headers = results[0]
 data = results[1:]
 df = pd.DataFrame(data, columns=headers)
@@ -163,7 +150,7 @@ Ask a question about your logs: How many errors occurred in the last hour?
 
 The agent will:
 1. Break down the question into steps
-2. Search for relevant log entries
+2. Search for relevant log entries using both DuckDB and Milvus
 3. Process the data
 4. Provide a comprehensive answer
 

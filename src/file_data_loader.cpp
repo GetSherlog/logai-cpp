@@ -45,7 +45,6 @@
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/filter/bzip2.hpp>
 #include <boost/iostreams/filter/zlib.hpp>
-#include "log_record_object.h"
 #include <folly/String.h>
 #include <folly/FBVector.h>
 
@@ -451,7 +450,7 @@ void FileDataLoader::consumer_thread(size_t num_threads, ThreadSafeQueue<Process
     }
 }
 
-void FileDataLoader::producer_thread(MemoryMappedFile& file, ThreadSafeQueue<LogBatch>& input_queue, 
+void FileDataLoader::producer_thread([[maybe_unused]] MemoryMappedFile& file, ThreadSafeQueue<LogBatch>& input_queue, 
                                     std::atomic<size_t>& total_batches) {
     try {
         if (config_.use_memory_mapping) {
@@ -1098,7 +1097,7 @@ bool FileDataLoader::create_table_from_records(const std::vector<LogRecordObject
             }
             
             // Determine type - for simplicity, use TEXT for everything
-            create_sql += ", " + key + " TEXT";
+            create_sql += ", " + key.toStdString() + " TEXT";
         }
         
         create_sql += ")";

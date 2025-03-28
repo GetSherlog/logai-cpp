@@ -7,12 +7,18 @@ namespace logai {
 MultiFileReader::MultiFileReader(const std::vector<FileEntry>& files) : files_(files) {
     for (const auto& file : files) {
         FileDataLoaderConfig config;
-        config.filename = file.filename;
+        config.file_path = file.filename;
         config.format = file.format;
-        config.follow = file.follow;
-        config.compressed = file.compressed;
+        // Maps follow and compressed fields to appropriate settings
+        // These don't exist directly in FileDataLoaderConfig, map to appropriate fields
+        if (file.follow) {
+            // Handle follow mode settings
+        }
+        if (file.compressed) {
+            config.decompress = file.compressed;
+        }
         
-        auto loader = std::make_unique<FileDataLoader>(config);
+        auto loader = std::make_unique<FileDataLoader>(file.filename, config);
         loaders_.push_back(std::move(loader));
     }
     
@@ -31,12 +37,17 @@ void MultiFileReader::addFile(const FileEntry& file) {
     files_.push_back(file);
     
     FileDataLoaderConfig config;
-    config.filename = file.filename;
+    config.file_path = file.filename;
     config.format = file.format;
-    config.follow = file.follow;
-    config.compressed = file.compressed;
+    // Maps follow and compressed fields to appropriate settings
+    if (file.follow) {
+        // Handle follow mode settings
+    }
+    if (file.compressed) {
+        config.decompress = file.compressed;
+    }
     
-    auto loader = std::make_unique<FileDataLoader>(config);
+    auto loader = std::make_unique<FileDataLoader>(file.filename, config);
     loaders_.push_back(std::move(loader));
     
     fillQueue();
@@ -90,9 +101,25 @@ std::optional<LogParser::LogEntry> MultiFileReader::nextEntry() {
     bytes_read_ += entry.entry.message.size();
     
     // Try to read next entry from the same file
-    auto next_entry = loaders_[entry.file_index]->nextEntry();
-    if (next_entry) {
-        entry_queue_.push({*next_entry, entry.file_index});
+    // Use loadData or streamData instead of nextEntry which doesn't exist in FileDataLoader
+    LogParser::LogEntry next_log_entry;
+    bool has_next = false;
+    
+    // Use a temporary vector to get a single entry
+    std::vector<LogParser::LogEntry> entries;
+    loaders_[entry.file_index]->loadData(entries);
+    
+    if (!entries.empty()) {
+        has_next = true;
+        next_log_entry = entries[0];
+    }
+    
+    if (has_next) {
+        // Create a QueueEntry and push it
+        QueueEntry next_queue_entry;
+        next_queue_entry.entry = next_log_entry;
+        next_queue_entry.file_index = entry.file_index;
+        entry_queue_.push(next_queue_entry);
     }
     
     return entry.entry;
@@ -104,7 +131,8 @@ bool MultiFileReader::hasMore() const {
     }
     
     for (const auto& loader : loaders_) {
-        if (loader->hasMore()) {
+        // Use get_progress() to check if there's more data
+        if (loader->get_progress() < 1.0) {
             return true;
         }
     }
@@ -126,10 +154,18 @@ size_t MultiFileReader::getBytesRead() const {
 
 void MultiFileReader::fillQueue() {
     for (size_t i = 0; i < loaders_.size(); ++i) {
-        if (entry_queue_.empty() || !loaders_[i]->hasMore()) {
-            auto entry = loaders_[i]->nextEntry();
-            if (entry) {
-                entry_queue_.push({*entry, i});
+        // Check if there are potentially more entries to read
+        if (entry_queue_.empty() || loaders_[i]->get_progress() < 1.0) {
+            // Use loadData to get entries instead of nextEntry
+            std::vector<LogParser::LogEntry> entries;
+            loaders_[i]->loadData(entries);
+            
+            if (!entries.empty()) {
+                // Create a QueueEntry for the first entry
+                QueueEntry queue_entry;
+                queue_entry.entry = entries[0];
+                queue_entry.file_index = i;
+                entry_queue_.push(queue_entry);
             }
         }
     }

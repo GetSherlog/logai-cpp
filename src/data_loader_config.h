@@ -27,5 +27,10 @@ struct DataLoaderConfig {
     bool enable_preprocessing = false;
     std::unordered_map<std::string, std::string> custom_delimiters_regex;
     std::vector<std::tuple<std::string, std::string>> custom_replace_list;
+
+    // DRAIN parser configuration
+    int drain_depth = 4;
+    double drain_similarity_threshold = 0.5;
+    int drain_max_children = 100;
 };
 } 
