@@ -9,20 +9,20 @@ std::optional<std::chrono::system_clock::time_point> parse_timestamp(std::string
 RegexParser::RegexParser(const DataLoaderConfig& config, const std::string& pattern)
     : config_(config), pattern_(pattern) {}
 
-LogEntry RegexParser::parse(const std::string& line) {
-    LogEntry entry;
+LogParser::LogEntry RegexParser::parse(const std::string& line) {
+    LogParser::LogEntry entry;
     try {
         // Use the existing parse_line implementation to get the LogRecordObject
         LogRecordObject record = parse_line(line);
         
         // Convert LogRecordObject to LogEntry
         entry.timestamp = record.timestamp ? std::to_string(record.timestamp->time_since_epoch().count()) : "";
-        entry.level = record.severity;
-        entry.message = record.body;
+        entry.level = record.level;
+        entry.message = record.message;
         
-        // Copy attributes to fields
-        for (const auto& [key, value] : record.attributes) {
-            entry.fields[std::string(key)] = std::string(value);
+        // Copy fields to fields
+        for (const auto& [key, value] : record.fields) {
+            entry.fields[key.toStdString()] = value.toStdString();
         }
     } catch (const std::exception& e) {
         throw std::runtime_error("Failed to parse log line: " + std::string(e.what()));
@@ -57,13 +57,13 @@ LogRecordObject RegexParser::parse_line(const std::string& line) {
             const auto name = std::to_string(i);
 
             if (name == "body") {
-                record.body = match.str();
+                record.message = match.str();
             } else if (name == "timestamp") {
                 record.timestamp = parse_timestamp(match.str(), config_.datetime_format);
             } else if (name == "severity") {
-                record.severity = match.str();
+                record.level = match.str();
             } else {
-                record.attributes[name] = match.str();
+                record.set_field(name, match.str());
             }
         }
     } catch (const std::regex_error& e) {
