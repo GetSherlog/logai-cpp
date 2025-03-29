@@ -1227,4 +1227,178 @@ void FileDataLoader::init_preprocessor() {
     }
 }
 
+// Add new methods for parsing logs
+
+std::vector<LogRecordObject> FileDataLoader::parse_log_file(const std::string& filepath, const std::string& format) {
+    try {
+        // Set format for parser
+        if (!format.empty()) {
+            setFormat(format);
+        }
+        
+        // Load and parse the log data
+        return read_logs(filepath);
+    }
+    catch (const std::exception& e) {
+        spdlog::error("Failed to parse log file: {}", e.what());
+        return std::vector<LogRecordObject>();
+    }
+}
+
+bool FileDataLoader::process_large_file_with_callback(
+    const std::string& input_file,
+    const std::string& parser_type,
+    size_t chunk_size,
+    const std::function<void(const std::vector<LogRecordObject>&)>& callback,
+    size_t memory_limit_mb) {
+    
+    try {
+        // Set format for parser
+        if (!parser_type.empty()) {
+            setFormat(parser_type);
+        }
+        
+        // Check if file exists
+        if (!std::filesystem::exists(input_file)) {
+            spdlog::error("Input file does not exist: {}", input_file);
+            return false;
+        }
+        
+        // Get file size
+        auto file_size = std::filesystem::file_size(input_file);
+        
+        // For very small files, just read everything at once
+        if (file_size < chunk_size * 100 && file_size < memory_limit_mb * 1024 * 1024 / 10) {
+            auto records = read_logs(input_file);
+            if (!records.empty()) {
+                callback(records);
+                return true;
+            }
+            return false;
+        }
+        
+        // For large files, process in chunks
+        MemoryMappedFile mmapped_file(input_file);
+        if (!mmapped_file.is_open()) {
+            spdlog::error("Failed to memory map file: {}", input_file);
+            return false;
+        }
+        
+        // Process file in chunks using producer-consumer pattern
+        const size_t line_estimate = chunk_size;
+        std::atomic<size_t> total_batches{0};
+        ThreadSafeQueue<LogBatch> input_queue;
+        ThreadSafeQueue<ProcessedBatch> output_queue;
+        
+        // Start producer thread to read file
+        std::thread producer([this, &mmapped_file, &input_queue, &total_batches, line_estimate]() {
+            producer_thread(mmapped_file, input_queue, total_batches);
+        });
+        
+        // Start worker threads to process batches
+        const size_t num_workers = std::thread::hardware_concurrency();
+        std::vector<std::thread> workers;
+        for (size_t i = 0; i < num_workers; i++) {
+            workers.emplace_back([this, &input_queue, &output_queue]() {
+                worker_thread(input_queue, output_queue);
+            });
+        }
+        
+        // Process output batches as they become available
+        std::thread consumer([this, &output_queue, &callback, num_workers, &total_batches]() {
+            // Process batches in order
+            std::map<size_t, ProcessedBatch> pending_batches;
+            size_t next_batch_id = 0;
+            
+            while (true) {
+                // Check if we're done
+                if (output_queue.empty() && total_batches.load() > 0 && 
+                    next_batch_id >= total_batches.load()) {
+                    break;
+                }
+                
+                // Get next batch
+                ProcessedBatch batch;
+                if (!output_queue.try_pop(batch)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+                
+                // Store batch for later if it's not the next one
+                if (batch.id != next_batch_id) {
+                    pending_batches[batch.id] = std::move(batch);
+                    continue;
+                }
+                
+                // Process this batch and any pending batches that are now ready
+                do {
+                    // Process the current batch
+                    callback(batch.records);
+                    next_batch_id++;
+                    
+                    // Check if the next batch is in pending
+                    auto it = pending_batches.find(next_batch_id);
+                    if (it == pending_batches.end()) {
+                        break;
+                    }
+                    
+                    // Process the pending batch
+                    batch = std::move(it->second);
+                    pending_batches.erase(it);
+                } while (true);
+            }
+        });
+        
+        // Wait for all threads to finish
+        producer.join();
+        for (auto& worker : workers) {
+            worker.join();
+        }
+        consumer.join();
+        
+        return true;
+    }
+    catch (const std::exception& e) {
+        spdlog::error("Failed to process large file: {}", e.what());
+        return false;
+    }
+}
+
+std::unordered_map<std::string, std::vector<std::string>> FileDataLoader::extract_attributes(
+    const std::vector<std::string>& log_lines,
+    const std::unordered_map<std::string, std::string>& patterns) {
+    
+    std::unordered_map<std::string, std::vector<std::string>> result;
+    
+    try {
+        // Initialize result map with empty vectors for all pattern keys
+        for (const auto& [name, _] : patterns) {
+            result[name] = std::vector<std::string>();
+            result[name].reserve(log_lines.size());
+        }
+        
+        // Extract attributes using regex for each line
+        for (const auto& line : log_lines) {
+            for (const auto& [name, pattern_str] : patterns) {
+                std::regex pattern(pattern_str);
+                std::smatch match;
+                
+                if (std::regex_search(line, match, pattern) && match.size() > 1) {
+                    // Use the first capturing group
+                    result[name].push_back(match[1].str());
+                } else {
+                    // No match
+                    result[name].push_back("");
+                }
+            }
+        }
+        
+        return result;
+    }
+    catch (const std::exception& e) {
+        spdlog::error("Failed to extract attributes: {}", e.what());
+        return result;
+    }
+}
+
 } // namespace logai 

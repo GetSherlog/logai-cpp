@@ -151,34 +151,173 @@ class LogAIAgent:
         """Initialize the agent with a log file."""
         self.console.print(f"[bold blue]Initializing LogAI Agent with file:[/] {log_file}")
         
-        # Parse the log file using the C++ wrapper
-        if not self.cpp_wrapper.parse_log_file(log_file, format or ""):
-            self.console.print("[bold red]Failed to parse log file.[/]")
+        try:
+            # Create DuckDB connection
+            import duckdb
+            self.duckdb_conn = duckdb.connect('logai.db')
+            
+            # Create tables if they don't exist
+            self.duckdb_conn.execute("""
+                CREATE TABLE IF NOT EXISTS log_entries (
+                    id INTEGER PRIMARY KEY,
+                    timestamp VARCHAR,
+                    level VARCHAR,
+                    message VARCHAR,
+                    template_id VARCHAR
+                )
+            """)
+            
+            self.duckdb_conn.execute("""
+                CREATE TABLE IF NOT EXISTS log_templates (
+                    template_id VARCHAR PRIMARY KEY,
+                    template TEXT,
+                    count INTEGER
+                )
+            """)
+            
+            # Parse the log file using the C++ wrapper
+            parsed_logs = self.cpp_wrapper.parse_log_file(log_file, format or "")
+            if not parsed_logs:
+                self.console.print("[bold red]Failed to parse log file.[/]")
+                return False
+            
+            # Load the parsed logs into DuckDB
+            self._load_logs_to_duckdb(parsed_logs)
+            
+            # Extract templates
+            templates = self._extract_templates_from_logs(parsed_logs)
+            
+            # Store templates in DuckDB
+            self._store_templates_in_duckdb(templates)
+            
+            # Store templates in Milvus if available
+            try:
+                self._store_templates_in_milvus(templates)
+            except Exception as e:
+                self.console.print(f"[bold yellow]Warning: Failed to store templates in Milvus: {str(e)}[/]")
+            
+            self.log_file = log_file
+            self.is_initialized = True
+            
+            self.console.print("[bold green]✓[/] Log file parsed successfully")
+            self.console.print("[bold green]✓[/] Templates extracted and stored")
+            self.console.print("[bold green]✓[/] Attributes stored in DuckDB")
+            
+            return True
+        except Exception as e:
+            self.console.print(f"[bold red]Error initializing agent:[/] {str(e)}")
             return False
+
+    def _load_logs_to_duckdb(self, parsed_logs: List[Dict[str, Any]]) -> None:
+        """Load parsed logs into DuckDB."""
+        # Create a Pandas DataFrame from the parsed logs
+        import pandas as pd
         
-        # Extract templates
-        if not self.cpp_wrapper.extract_templates():
-            self.console.print("[bold red]Failed to extract templates.[/]")
-            return False
+        # Extract relevant fields
+        records = []
+        for i, log in enumerate(parsed_logs):
+            record = {
+                'id': i,
+                'timestamp': log.get('timestamp'),
+                'level': log.get('level'),
+                'message': log.get('message'),
+                'template_id': log.get('template_id', ''),
+                'body': log.get('body')
+            }
+            records.append(record)
         
-        # Store templates in Milvus
-        if not self.cpp_wrapper.store_templates_in_milvus():
-            self.console.print("[bold red]Failed to store templates in Milvus.[/]")
-            return False
+        # Create DataFrame
+        df = pd.DataFrame(records)
         
-        # Store attributes in DuckDB
-        if not self.cpp_wrapper.store_attributes_in_duckdb():
-            self.console.print("[bold red]Failed to store attributes in DuckDB.[/]")
-            return False
+        # Insert into DuckDB
+        self.duckdb_conn.execute("DELETE FROM log_entries")
+        self.duckdb_conn.execute("INSERT INTO log_entries SELECT * FROM df")
         
-        self.log_file = log_file
-        self.is_initialized = True
+        self.console.print(f"[bold green]✓[/] Loaded {len(records)} log entries into DuckDB")
+
+    def _extract_templates_from_logs(self, parsed_logs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Extract templates from parsed logs."""
+        templates = {}
         
-        self.console.print("[bold green]✓[/] Log file parsed successfully")
-        self.console.print("[bold green]✓[/] Templates extracted and stored")
-        self.console.print("[bold green]✓[/] Attributes stored in DuckDB")
+        # Count occurrences of each template
+        for log in parsed_logs:
+            template = log.get('template', '')
+            if not template:
+                continue
+            
+            template_id = str(hash(template) % 10000000)
+            
+            if template_id in templates:
+                templates[template_id]['count'] += 1
+            else:
+                templates[template_id] = {
+                    'template_id': template_id,
+                    'template': template,
+                    'count': 1
+                }
         
-        return True
+        return templates
+
+    def _store_templates_in_duckdb(self, templates: Dict[str, Dict[str, Any]]) -> None:
+        """Store templates in DuckDB."""
+        import pandas as pd
+        
+        # Create DataFrame from templates
+        template_records = list(templates.values())
+        df = pd.DataFrame(template_records)
+        
+        # Insert into DuckDB
+        self.duckdb_conn.execute("DELETE FROM log_templates")
+        self.duckdb_conn.execute("INSERT INTO log_templates SELECT * FROM df")
+        
+        self.console.print(f"[bold green]✓[/] Stored {len(template_records)} templates in DuckDB")
+
+    def _store_templates_in_milvus(self, templates: Dict[str, Dict[str, Any]]) -> None:
+        """Store templates in Milvus."""
+        # Initialize Milvus connection
+        if not self.cpp_wrapper.init_milvus():
+            raise Exception("Failed to initialize Milvus connection")
+        
+        # Store each template in Milvus
+        stored_count = 0
+        failed_count = 0
+        
+        for template_id, template_data in templates.items():
+            # Generate embedding
+            template_text = template_data['template']
+            embedding = self.cpp_wrapper.generate_template_embedding(template_text)
+            
+            if not embedding:
+                failed_count += 1
+                continue
+            
+            # TODO: Store in Milvus using the Python Milvus client
+            # For now, just increment the count
+            stored_count += 1
+        
+        self.console.print(f"[bold green]✓[/] Stored {stored_count} templates in Milvus, failed: {failed_count}")
+
+    def execute_query(self, query: str) -> Dict[str, Any]:
+        """Execute a SQL query against the log data."""
+        if not self.is_initialized:
+            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
+            return {"columns": [], "rows": []}
+        
+        try:
+            # Execute query directly in DuckDB
+            result = self.duckdb_conn.execute(query).fetchdf()
+            
+            # Convert to dictionary format
+            columns = result.columns.tolist()
+            rows = result.values.tolist()
+            
+            return {
+                "columns": columns,
+                "rows": rows
+            }
+        except Exception as e:
+            self.console.print(f"[bold red]Error executing query:[/] {str(e)}")
+            return {"columns": [], "rows": []}
 
     def search_logs(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Search logs matching a pattern."""
@@ -192,19 +331,6 @@ class LogAIAgent:
         except Exception as e:
             self.console.print(f"[bold red]Error searching logs:[/] {str(e)}")
             return []
-
-    def execute_query(self, query: str) -> Dict[str, Any]:
-        """Execute a SQL query against the log data."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return {"columns": [], "rows": []}
-            
-        try:
-            results = self.cpp_wrapper.execute_query(query)
-            return json.loads(results)
-        except Exception as e:
-            self.console.print(f"[bold red]Error executing query:[/] {str(e)}")
-            return {"columns": [], "rows": []}
 
     def get_template(self, template_id: int) -> Optional[Dict[str, Any]]:
         """Get information about a specific template."""

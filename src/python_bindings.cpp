@@ -9,14 +9,11 @@
 #include <sstream>
 #include <vector>
 #include <string>
-#include <duckdb.hpp>
 
 namespace py = pybind11;
 using json = nlohmann::json;
 
 // Global objects to maintain state between calls
-static std::unique_ptr<duckdb::DuckDB> g_duckdb;
-static std::unique_ptr<duckdb::Connection> g_duckdb_conn;
 static std::unique_ptr<logai::GeminiVectorizer> g_vectorizer;
 static std::string g_milvus_host = "milvus";
 static int g_milvus_port = 19530;
@@ -47,42 +44,6 @@ std::vector<float> generate_template_embedding(const std::string& template_text)
     } catch (const std::exception& e) {
         py::print("Error generating embedding:", e.what());
         return std::vector<float>();
-    }
-}
-
-// Initialize DuckDB store
-bool init_duckdb(const std::string& db_path = "logai.db") {
-    try {
-        if (!g_duckdb) {
-            g_duckdb = std::make_unique<duckdb::DuckDB>(db_path);
-            g_duckdb_conn = std::make_unique<duckdb::Connection>(*g_duckdb);
-            
-            // Create schema for logs
-            g_duckdb_conn->Query(R"(
-                CREATE TABLE IF NOT EXISTS log_entries (
-                    id INTEGER PRIMARY KEY,
-                    timestamp VARCHAR,
-                    level VARCHAR,
-                    message VARCHAR,
-                    template_id VARCHAR
-                )
-            )");
-            
-            // Create schema for templates
-            g_duckdb_conn->Query(R"(
-                CREATE TABLE IF NOT EXISTS log_templates (
-                    template_id VARCHAR PRIMARY KEY,
-                    template TEXT,
-                    count INTEGER
-                )
-            )");
-        }
-        
-        py::print("Successfully initialized DuckDB store");
-        return true;
-    } catch (const std::exception& e) {
-        py::print("Error initializing DuckDB:", e.what());
-        return false;
     }
 }
 
@@ -122,15 +83,9 @@ bool init_milvus(const std::string& host = "milvus", int port = 19530) {
     }
 }
 
-// Function to parse a log file and extract messages
-bool parse_log_file(const std::string& file_path, const std::string& format, bool store_templates_in_milvus = true) {
+// Function to parse a log file and return parsed records
+py::list parse_log_file(const std::string& file_path, const std::string& format = "") {
     try {
-        if (!g_duckdb_conn) {
-            if (!init_duckdb()) {
-                return false;
-            }
-        }
-        
         // Create file data loader with appropriate configuration
         logai::FileDataLoaderConfig config;
         config.format = format.empty() ? "logfmt" : format;
@@ -138,90 +93,137 @@ bool parse_log_file(const std::string& file_path, const std::string& format, boo
         
         logai::FileDataLoader loader(file_path, config);
         
-        // Use the optimized method to load logs directly to DuckDB
-        std::string table_name = "log_entries";
+        // Parse the log file and get records
+        auto records = loader.parse_log_file(file_path, config.format);
         
-        // Process file and store in DuckDB in chunks for memory efficiency
-        bool result = loader.process_large_file(
-            file_path,
-            config.format,
-            *g_duckdb_conn,
-            table_name,
-            2000,  // 2GB memory limit
-            10000  // Process in chunks of 10,000 lines
-        );
-        
-        // If requested and successful, also store templates in Milvus
-        if (result && store_templates_in_milvus) {
-            py::print("Extracting templates for vector storage...");
+        // Convert to Python list of dictionaries
+        py::list result;
+        for (const auto& record : records) {
+            py::dict record_dict;
+            record_dict["body"] = record.body;
+            record_dict["template"] = record.template_str;
+            record_dict["level"] = record.level;
+            record_dict["message"] = record.message;
             
-            // Query for unique templates from the processed data
-            auto template_result = g_duckdb_conn->Query(R"(
-                SELECT DISTINCT template_id, template 
-                FROM log_templates
-                WHERE template IS NOT NULL AND template != ''
-            )");
-            
-            if (template_result->HasError()) {
-                py::print("Error querying templates:", template_result->GetError());
+            // Convert timestamp if present
+            if (record.timestamp) {
+                auto time_t = std::chrono::system_clock::to_time_t(*record.timestamp);
+                std::stringstream ss;
+                ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+                record_dict["timestamp"] = ss.str();
             } else {
-                // Process each template and store in Milvus
-                size_t stored_count = 0;
-                size_t failed_count = 0;
-                
-                for (size_t i = 0; i < template_result->RowCount(); i++) {
-                    std::string template_id = template_result->GetValue(0, i).ToString();
-                    std::string template_text = template_result->GetValue(1, i).ToString();
-                    
-                    // Generate embedding
-                    std::vector<float> embedding = generate_template_embedding(template_text);
-                    if (embedding.empty()) {
-                        failed_count++;
-                        continue;
-                    }
-                    
-                    // Store in Milvus
-                    CURL* curl = curl_easy_init();
-                    if (!curl) {
-                        py::print("Failed to initialize CURL");
-                        failed_count++;
-                        continue;
-                    }
-                    
-                    std::string url = "http://" + g_milvus_host + ":" + std::to_string(g_milvus_port) + "/insert";
-                    json data = {
-                        {"collection_name", "log_templates"},
-                        {"vectors", {embedding}},
-                        {"ids", {template_id}},
-                        {"metas", {{"template", template_text}}}
-                    };
-                    
-                    std::string postData = data.dump();
-                    std::string response;
-                    
-                    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-                    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
-                    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-                    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-                    
-                    CURLcode res = curl_easy_perform(curl);
-                    curl_easy_cleanup(curl);
-                    
-                    if (res == CURLE_OK) {
-                        stored_count++;
-                    } else {
-                        failed_count++;
-                    }
-                }
-                
-                py::print("Stored", stored_count, "templates in Milvus, failed:", failed_count);
+                record_dict["timestamp"] = py::none();
             }
+            
+            // Convert severity if present
+            record_dict["severity"] = record.severity ? py::cast(*record.severity) : py::none();
+            
+            // Convert fields
+            py::dict fields_dict;
+            for (const auto& [key, value] : record.fields) {
+                fields_dict[py::str(key.c_str())] = py::str(value.c_str());
+            }
+            record_dict["fields"] = fields_dict;
+            
+            result.append(record_dict);
         }
         
         return result;
     } catch (const std::exception& e) {
-        py::print("Error loading log file:", e.what());
+        py::print("Error parsing log file:", e.what());
+        return py::list();
+    }
+}
+
+// Process large log file with callback to Python
+bool process_large_file_with_callback(const std::string& file_path, const std::string& format, py::function callback, int chunk_size = 10000) {
+    try {
+        // Create file data loader with appropriate configuration
+        logai::FileDataLoaderConfig config;
+        config.format = format.empty() ? "logfmt" : format;
+        config.encoding = "utf-8";
+        
+        logai::FileDataLoader loader(file_path, config);
+        
+        // Create a C++ callback that calls the Python function
+        auto cpp_callback = [&callback](const std::vector<logai::LogRecordObject>& batch) {
+            // Convert batch to a Python list
+            py::list py_batch;
+            
+            for (const auto& record : batch) {
+                py::dict record_dict;
+                record_dict["body"] = record.body;
+                record_dict["template"] = record.template_str;
+                record_dict["level"] = record.level;
+                record_dict["message"] = record.message;
+                
+                // Convert timestamp if present
+                if (record.timestamp) {
+                    auto time_t = std::chrono::system_clock::to_time_t(*record.timestamp);
+                    std::stringstream ss;
+                    ss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+                    record_dict["timestamp"] = ss.str();
+                } else {
+                    record_dict["timestamp"] = py::none();
+                }
+                
+                // Convert severity if present
+                record_dict["severity"] = record.severity ? py::cast(*record.severity) : py::none();
+                
+                // Convert fields
+                py::dict fields_dict;
+                for (const auto& [key, value] : record.fields) {
+                    fields_dict[py::str(key.c_str())] = py::str(value.c_str());
+                }
+                record_dict["fields"] = fields_dict;
+                
+                py_batch.append(record_dict);
+            }
+            
+            // Call the Python function
+            callback(py_batch);
+        };
+        
+        // Process the file
+        return loader.process_large_file_with_callback(
+            file_path,
+            config.format,
+            chunk_size,
+            cpp_callback
+        );
+    } catch (const std::exception& e) {
+        py::print("Error processing log file:", e.what());
         return false;
+    }
+}
+
+// Extract attributes from log lines
+py::dict extract_attributes(const std::vector<std::string>& log_lines, const std::map<std::string, std::string>& patterns) {
+    try {
+        // Create a file data loader
+        logai::FileDataLoaderConfig config;
+        logai::FileDataLoader loader("", config);
+        
+        // Convert to unordered_map for C++ function
+        std::unordered_map<std::string, std::string> patterns_map(patterns.begin(), patterns.end());
+        
+        // Extract attributes
+        auto result = loader.extract_attributes(log_lines, patterns_map);
+        
+        // Convert to Python dictionary
+        py::dict py_result;
+        for (const auto& [key, values] : result) {
+            py::list py_values;
+            for (const auto& value : values) {
+                py_values.append(py::str(value));
+            }
+            py_result[py::str(key)] = py_values;
+        }
+        
+        return py_result;
+    } catch (const std::exception& e) {
+        py::print("Error extracting attributes:", e.what());
+        return py::dict();
     }
 }
 
@@ -230,96 +232,30 @@ std::string get_milvus_connection_string() {
     return g_milvus_host + ":" + std::to_string(g_milvus_port);
 }
 
-// Get DuckDB connection string
-std::string get_duckdb_connection_string() {
-    return "logai.db";
-}
-
-// Function to run a SQL query on the DuckDB database
-py::object run_duckdb_query(const std::string& query) {
-    try {
-        if (!g_duckdb_conn) {
-            if (!init_duckdb()) {
-                return py::none();
-            }
-        }
-        
-        auto result = g_duckdb_conn->Query(query);
-        if (result->HasError()) {
-            py::print("Query error:", result->GetError());
-            return py::none();
-        }
-        
-        // Convert result to a Python dictionary
-        py::dict py_result;
-        py::list rows;
-        
-        // Get column names
-        auto& names = result->names;
-        py::list column_names;
-        for (const auto& name : names) {
-            column_names.append(py::str(name));
-        }
-        py_result["columns"] = column_names;
-        
-        // Get rows
-        for (size_t row_idx = 0; row_idx < result->RowCount(); row_idx++) {
-            py::list row_data;
-            for (size_t col_idx = 0; col_idx < result->ColumnCount(); col_idx++) {
-                auto val = result->GetValue(col_idx, row_idx);
-                if (val.IsNull()) {
-                    row_data.append(py::none());
-                } else {
-                    switch (val.type().id()) {
-                        case duckdb::LogicalTypeId::VARCHAR:
-                            row_data.append(py::str(val.GetValue<std::string>()));
-                            break;
-                        case duckdb::LogicalTypeId::INTEGER:
-                            row_data.append(py::int_(val.GetValue<int32_t>()));
-                            break;
-                        case duckdb::LogicalTypeId::BIGINT:
-                            row_data.append(py::int_(val.GetValue<int64_t>()));
-                            break;
-                        case duckdb::LogicalTypeId::FLOAT:
-                            row_data.append(py::float_(val.GetValue<float>()));
-                            break;
-                        case duckdb::LogicalTypeId::DOUBLE:
-                            row_data.append(py::float_(val.GetValue<double>()));
-                            break;
-                        case duckdb::LogicalTypeId::BOOLEAN:
-                            row_data.append(py::bool_(val.GetValue<bool>()));
-                            break;
-                        default:
-                            row_data.append(py::str(val.ToString()));
-                            break;
-                    }
-                }
-            }
-            rows.append(row_data);
-        }
-        py_result["data"] = rows;
-        
-        return py_result;
-    } catch (const std::exception& e) {
-        py::print("Error executing query:", e.what());
-        return py::none();
-    }
-}
-
 PYBIND11_MODULE(logai_cpp, m) {
-    m.doc() = "Python bindings for LogAI C++ library";
+    m.doc() = "LogAI C++ Module for Log Parsing and Analysis";
     
-    // Expose the essential functions
-    m.def("init_duckdb", &init_duckdb, "Initialize DuckDB store",
-          py::arg("db_path") = "logai.db");
+    // Parser functions
+    m.def("parse_log_file", &parse_log_file, "Parse a log file and return parsed records",
+          py::arg("file_path"), py::arg("format") = "");
+    
+    m.def("process_large_file_with_callback", &process_large_file_with_callback,
+          "Process a large log file with a callback function for each batch of records",
+          py::arg("file_path"), py::arg("format"), py::arg("callback"), py::arg("chunk_size") = 10000);
+    
+    // Attribute extraction
+    m.def("extract_attributes", &extract_attributes, "Extract attributes from log lines using regex patterns",
+          py::arg("log_lines"), py::arg("patterns"));
+    
+    // Milvus functions
     m.def("init_milvus", &init_milvus, "Initialize Milvus connection",
           py::arg("host") = "milvus", py::arg("port") = 19530);
-    m.def("parse_log_file", &parse_log_file, "Parse a log file and store in DuckDB and Milvus",
-          py::arg("file_path"), py::arg("format") = "", py::arg("store_templates_in_milvus") = true);
-    m.def("get_milvus_connection_string", &get_milvus_connection_string, 
-          "Get Milvus connection string");
-    m.def("get_duckdb_connection_string", &get_duckdb_connection_string,
-          "Get DuckDB connection string");
-    m.def("run_duckdb_query", &run_duckdb_query, "Run SQL query on DuckDB database",
-          py::arg("query"));
+    
+    m.def("get_milvus_connection_string", &get_milvus_connection_string,
+          "Get the Milvus connection string");
+    
+    // Embedding functions
+    m.def("generate_template_embedding", &generate_template_embedding,
+          "Generate embedding for a template using Gemini API",
+          py::arg("template_text"));
 } 

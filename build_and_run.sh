@@ -28,6 +28,21 @@ fi
 echo -e "${BLUE}[0/4] Cleaning old build artifacts...${NC}"
 rm -rf build src/build python/build python/dist python/*.egg-info
 
+# Check for DuckDB library files
+echo -e "${BLUE}[0.5/4] Checking DuckDB library files...${NC}"
+DUCKDB_LIB_DIR="duckdb-lib"
+SRC_DIR="src"
+
+# Check if DuckDB libraries exist in expected locations
+if [ -f "${DUCKDB_LIB_DIR}/libduckdb.so" ] || [ -f "${DUCKDB_LIB_DIR}/libduckdb.dylib" ] || [ -f "${DUCKDB_LIB_DIR}/libduckdb.a" ]; then
+    echo -e "${GREEN}Found DuckDB libraries in ${DUCKDB_LIB_DIR}${NC}"
+elif [ -f "${SRC_DIR}/libduckdb.so" ] || [ -f "${SRC_DIR}/libduckdb.dylib" ] || [ -f "${SRC_DIR}/libduckdb.a" ]; then
+    echo -e "${GREEN}Found DuckDB libraries in ${SRC_DIR}${NC}"
+else
+    echo -e "${YELLOW}Warning: DuckDB libraries not found in expected locations.${NC}"
+    echo -e "${YELLOW}The build may fail if DuckDB is not installed system-wide.${NC}"
+fi
+
 # Set Docker image and container names
 IMAGE_NAME="logai-cpp"
 CONTAINER_NAME="logai-cpp-container"

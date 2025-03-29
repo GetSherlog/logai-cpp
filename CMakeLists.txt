@@ -24,7 +24,9 @@ find_package(pybind11 REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(Folly REQUIRED)
-find_package(DuckDB REQUIRED)
+
+# We no longer need DuckDB - remove those dependencies
+
 find_package(CURL REQUIRED)
 
 # Add include directories
@@ -57,8 +59,6 @@ target_include_directories(logai PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Link with dependencies
 target_link_libraries(logai 
     PRIVATE nlohmann_json::nlohmann_json
-    PRIVATE duckdb
-    PRIVATE folly
     PRIVATE ${CURL_LIBRARIES}
     PRIVATE spdlog::spdlog
 )
@@ -71,8 +71,6 @@ pybind11_add_module(logai_cpp MODULE
 target_link_libraries(logai_cpp
     PRIVATE logai
     PRIVATE nlohmann_json::nlohmann_json
-    PRIVATE duckdb
-    PRIVATE folly
     PRIVATE ${CURL_LIBRARIES}
     PRIVATE spdlog::spdlog
 )
@@ -105,5 +103,4 @@ message(STATUS "  CMAKE_CXX_FLAGS:   ${CMAKE_CXX_FLAGS}")
 message(STATUS "  C++ compiler:      ${CMAKE_CXX_COMPILER}")
 message(STATUS "  C++ compiler ID:   ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "  Install prefix:    ${CMAKE_INSTALL_PREFIX}")
-message(STATUS "  DuckDB version:    ${DUCKDB_VERSION}")
 message(STATUS "-------------------------")

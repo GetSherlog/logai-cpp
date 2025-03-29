@@ -9,7 +9,6 @@
 #include <filesystem>
 #include <unordered_set>
 #include <optional>
-#include <duckdb.hpp>
 #include "data_loader_config.h"
 #include "log_record.h"
 #include "memory_mapped_file.h"
@@ -85,27 +84,31 @@ public:
     std::vector<LogRecordObject> load_data();
     double get_progress() const;
     
-    // DuckDB-based operations
-    bool log_to_duckdb_table(const std::string& filepath, 
-                             const std::string& format, 
-                             duckdb::Connection& conn, 
-                             const std::string& table_name);
-                             
-    bool filter_duckdb_table(duckdb::Connection& conn, 
-                             const std::string& input_table, 
-                             const std::string& output_table,
-                             const std::vector<std::string>& dimensions);
-                             
-    bool filter_duckdb_table(duckdb::Connection& conn, 
-                             const std::string& input_table, 
-                             const std::string& output_table,
-                             const std::string& column, 
-                             const std::string& op, 
-                             const std::string& value);
-                             
-    bool export_to_csv(duckdb::Connection& conn, 
-                       const std::string& table_name, 
-                       const std::string& output_path);
+    /**
+     * @brief Parse a log file and return the parsed records
+     * 
+     * @param filepath The path to the log file
+     * @param format The format of the log file (e.g., "json", "csv", "syslog")
+     * @return std::vector<LogRecordObject> Vector of parsed log records
+     */
+    std::vector<LogRecordObject> parse_log_file(const std::string& filepath, const std::string& format);
+    
+    /**
+     * @brief Process a large log file and return parsed records in batches
+     * 
+     * @param input_file The path to the input log file
+     * @param parser_type The type of parser to use
+     * @param chunk_size Number of lines per batch
+     * @param callback Function to call with each batch of parsed records
+     * @param memory_limit_mb Maximum memory limit in megabytes
+     * @return bool True if processing succeeded
+     */
+    bool process_large_file_with_callback(
+        const std::string& input_file,
+        const std::string& parser_type,
+        size_t chunk_size,
+        const std::function<void(const std::vector<LogRecordObject>&)>& callback,
+        size_t memory_limit_mb = 2000);
 
     /**
      * @brief Apply preprocessing to a batch of log lines
@@ -120,38 +123,14 @@ public:
      * 
      * @param log_lines The preprocessed log lines
      * @param patterns Map of attribute names to regex patterns
-     * @param conn DuckDB connection to store the results
-     * @param table_name Name of the output table
-     * @return True if extraction succeeded, false otherwise
+     * @return std::unordered_map<std::string, std::vector<std::string>> Map of attribute names to values
      */
-    bool extract_attributes(
+    std::unordered_map<std::string, std::vector<std::string>> extract_attributes(
         const std::vector<std::string>& log_lines,
-        const std::unordered_map<std::string, std::string>& patterns,
-        duckdb::Connection& conn,
-        const std::string& table_name);
+        const std::unordered_map<std::string, std::string>& patterns);
 
     // Process a single batch of log lines
     void process_batch(const LogBatch& batch, ProcessedBatch& result);
-    
-    /**
-     * @brief Process a large log file with automatic memory management and chunking
-     * 
-     * @param input_file The path to the input log file
-     * @param parser_type The type of parser to use (drain, json, csv, regex)
-     * @param conn DuckDB connection to store the results
-     * @param table_name Name of the output table
-     * @param memory_limit_mb Maximum memory limit in megabytes
-     * @param chunk_size Initial chunk size (number of lines per batch)
-     * @param force_chunking Force processing in chunks even if file is small
-     * @return True if processing succeeded, false otherwise
-     */
-    bool process_large_file(const std::string& input_file,
-                           const std::string& parser_type,
-                           duckdb::Connection& conn,
-                           const std::string& table_name,
-                           size_t memory_limit_mb = 2000,
-                           size_t chunk_size = 10000,
-                           bool force_chunking = false);
 
 private:
     std::string filepath_;
@@ -241,12 +220,8 @@ private:
     bool detect_memory_pressure() const;
     void process_in_chunks(const std::string& filepath, size_t chunk_size, const std::string& output_dir);
     
-    // Helper method to create a table in DuckDB from log records
-    bool create_table_from_records(const std::vector<LogRecordObject>& records,
-                                  duckdb::Connection& conn,
-                                  const std::string& table_name);
-    
     // Initialize preprocessor if needed
     void init_preprocessor();
-}; 
-}
+};
+
+} // namespace logai

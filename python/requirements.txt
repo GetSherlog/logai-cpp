@@ -18,4 +18,21 @@ python-dotenv==1.0.1
 tqdm==4.66.2
 numpy==1.26.3
 pandas==2.2.0
-pydantic-ai==0.0.14 
+pydantic-ai==0.0.14
+
+# New additions
+pydantic>=2.0.0
+pydantic-ai>=0.2.0
+fastapi>=0.98.0
+uvicorn>=0.22.0
+python-multipart>=0.0.6
+duckdb>=0.10.0
+pandas>=2.0.0
+numpy>=1.24.0
+openai>=1.0.0
+google-generativeai>=0.3.0
+anthropic>=0.16.0
+rich>=13.0.0
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+instructor>=1.0.0 

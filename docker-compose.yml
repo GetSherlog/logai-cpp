@@ -10,7 +10,7 @@ services:
     volumes:
       - ./logs:/workspace/logs
       - ./uploads:/workspace/uploads
-      - ./logai.db:/workspace/logai.db
+      - ./logai.db:/workspace/logai.db  # DuckDB is now handled in Python
     environment:
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
@@ -25,6 +25,7 @@ services:
     networks:
       - logai-network
 
+  # Milvus for vector similarity search (used from Python)
   milvus:
     image: milvusdb/milvus:v2.3.3
     ports:
