@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-import os
 import sys
 import json
-import time
 import argparse
 from typing import List, Dict, Any, Optional, Union, Callable, Literal, Type, TypeVar
 from dataclasses import dataclass
@@ -291,9 +289,18 @@ class LogAIAgent:
                 failed_count += 1
                 continue
             
-            # TODO: Store in Milvus using the Python Milvus client
-            # For now, just increment the count
-            stored_count += 1
+            # Store in Milvus using the Python Milvus client
+            success = self.cpp_wrapper.insert_template(
+                template_id=template_id,
+                template=template_text,
+                count=template_data['count'],
+                embedding=embedding
+            )
+            
+            if success:
+                stored_count += 1
+            else:
+                failed_count += 1
         
         self.console.print(f"[bold green]✓[/] Stored {stored_count} templates in Milvus, failed: {failed_count}")
 
@@ -318,127 +325,6 @@ class LogAIAgent:
         except Exception as e:
             self.console.print(f"[bold red]Error executing query:[/] {str(e)}")
             return {"columns": [], "rows": []}
-
-    def search_logs(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Search logs matching a pattern."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return []
-            
-        try:
-            results = self.cpp_wrapper.search_logs(query, limit)
-            return json.loads(results)["logs"]
-        except Exception as e:
-            self.console.print(f"[bold red]Error searching logs:[/] {str(e)}")
-            return []
-
-    def get_template(self, template_id: int) -> Optional[Dict[str, Any]]:
-        """Get information about a specific template."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return None
-            
-        try:
-            results = self.cpp_wrapper.get_template(template_id)
-            return json.loads(results)
-        except Exception as e:
-            self.console.print(f"[bold red]Error getting template:[/] {str(e)}")
-            return None
-
-    def get_time_range(self) -> Dict[str, str]:
-        """Get the time range of the loaded logs."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return {"start": "", "end": ""}
-            
-        try:
-            results = self.cpp_wrapper.get_time_range()
-            return json.loads(results)
-        except Exception as e:
-            self.console.print(f"[bold red]Error getting time range:[/] {str(e)}")
-            return {"start": "", "end": ""}
-
-    def count_occurrences(self, pattern: str, group_by: Optional[str] = None) -> Dict[str, Any]:
-        """Count occurrences of a pattern in the logs."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return {"count": 0, "groups": {}}
-            
-        try:
-            results = self.cpp_wrapper.count_occurrences(pattern, group_by or "")
-            return json.loads(results)
-        except Exception as e:
-            self.console.print(f"[bold red]Error counting occurrences:[/] {str(e)}")
-            return {"count": 0, "groups": {}}
-
-    def summarize_logs(self, time_range: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """Generate a summary of the logs."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return {}
-            
-        try:
-            time_range_json = json.dumps(time_range) if time_range else ""
-            results = self.cpp_wrapper.summarize_logs(time_range_json)
-            return json.loads(results)
-        except Exception as e:
-            self.console.print(f"[bold red]Error summarizing logs:[/] {str(e)}")
-            return {}
-
-    def filter_by_time(self, since: Optional[str] = None, until: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Filter logs by time range."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return []
-            
-        try:
-            results = self.cpp_wrapper.filter_by_time(since or "", until or "")
-            return json.loads(results)["logs"]
-        except Exception as e:
-            self.console.print(f"[bold red]Error filtering logs by time:[/] {str(e)}")
-            return []
-
-    def filter_by_level(self, levels: Optional[List[str]] = None, exclude_levels: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Filter logs by log level."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return []
-            
-        try:
-            results = self.cpp_wrapper.filter_by_level(
-                levels or [],
-                exclude_levels or []
-            )
-            return json.loads(results)["logs"]
-        except Exception as e:
-            self.console.print(f"[bold red]Error filtering logs by level:[/] {str(e)}")
-            return []
-
-    def calculate_statistics(self) -> Dict[str, Any]:
-        """Calculate statistics about the logs."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return {}
-            
-        try:
-            results = self.cpp_wrapper.calculate_statistics()
-            return json.loads(results)
-        except Exception as e:
-            self.console.print(f"[bold red]Error calculating statistics:[/] {str(e)}")
-            return {}
-
-    def get_trending_patterns(self, time_window: str = "hour") -> List[Dict[str, Any]]:
-        """Detect trending patterns in the logs."""
-        if not self.is_initialized:
-            self.console.print("[bold red]Error: Agent not initialized. Call initialize() first.[/]")
-            return []
-            
-        try:
-            results = self.cpp_wrapper.get_trending_patterns(time_window)
-            return json.loads(results)["patterns"]
-        except Exception as e:
-            self.console.print(f"[bold red]Error detecting trending patterns:[/] {str(e)}")
-            return []
 
 def main():
     parser = argparse.ArgumentParser(description="LogAI Agent - AI-powered log analysis")
