@@ -2,7 +2,6 @@
 
 #include <string>
 #include <memory>
-#include <unordered_map>
 #include <vector>
 #include <chrono>
 #include <optional>
@@ -23,7 +22,7 @@ public:
         std::string timestamp;
         std::string level;
         std::string message;
-        std::unordered_map<std::string, std::string> fields;
+        folly::F14FastMap<std::string, std::string> fields;
 
         LogRecordObject to_record_object() const {
             LogRecordObject record;

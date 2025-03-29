@@ -2,10 +2,10 @@
 
 #include <string>
 #include <vector>
-#include <unordered_map>
 #include <optional>
 #include <thread>
 #include <tuple>
+#include <folly/container/F14Map.h>
 
 namespace logai {
 
@@ -25,7 +25,7 @@ struct DataLoaderConfig {
     
     // Preprocessor configuration
     bool enable_preprocessing = false;
-    std::unordered_map<std::string, std::string> custom_delimiters_regex;
+    folly::F14FastMap<std::string, std::string> custom_delimiters_regex;
     std::vector<std::tuple<std::string, std::string>> custom_replace_list;
 
     // DRAIN parser configuration

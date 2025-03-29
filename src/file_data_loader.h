@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <unordered_set>
 #include <optional>
+#include <folly/container/F14Map.h>
 #include "data_loader_config.h"
 #include "log_record.h"
 #include "memory_mapped_file.h"
@@ -123,11 +124,11 @@ public:
      * 
      * @param log_lines The preprocessed log lines
      * @param patterns Map of attribute names to regex patterns
-     * @return std::unordered_map<std::string, std::vector<std::string>> Map of attribute names to values
+     * @return folly::F14FastMap<std::string, std::vector<std::string>> Map of attribute names to values
      */
-    std::unordered_map<std::string, std::vector<std::string>> extract_attributes(
+    folly::F14FastMap<std::string, std::vector<std::string>> extract_attributes(
         const std::vector<std::string>& log_lines,
-        const std::unordered_map<std::string, std::string>& patterns);
+        const folly::F14FastMap<std::string, std::string>& patterns);
 
     // Process a single batch of log lines
     void process_batch(const LogBatch& batch, ProcessedBatch& result);

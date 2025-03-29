@@ -19,7 +19,6 @@
 #include "regex_parser.h"
 #include "drain_parser.h"
 #include "simd_scanner.h"
-#include <duckdb.hpp>
 #include "preprocessor.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -47,6 +46,7 @@
 #include <boost/iostreams/filter/zlib.hpp>
 #include <folly/String.h>
 #include <folly/FBVector.h>
+#include <folly/container/F14Map.h>
 
 // Define namespace aliases to avoid conflicts
 namespace fs = std::filesystem;
@@ -710,11 +710,11 @@ std::vector<LogRecordObject> FileDataLoader::read_json(const std::string& filepa
 // - process_large_file (DuckDB version)
 // - create_table_from_records
 
-std::unordered_map<std::string, std::vector<std::string>> FileDataLoader::extract_attributes(
+folly::F14FastMap<std::string, std::vector<std::string>> FileDataLoader::extract_attributes(
     const std::vector<std::string>& log_lines,
-    const std::unordered_map<std::string, std::string>& patterns) {
+    const folly::F14FastMap<std::string, std::string>& patterns) {
     
-    std::unordered_map<std::string, std::vector<std::string>> result;
+    folly::F14FastMap<std::string, std::vector<std::string>> result;
     
     try {
         // Initialize result map with empty vectors for all pattern keys

@@ -9,6 +9,7 @@
 #include <sstream>
 #include <vector>
 #include <string>
+#include <folly/container/F14Map.h>
 
 namespace py = pybind11;
 using json = nlohmann::json;
@@ -204,8 +205,8 @@ py::dict extract_attributes(const std::vector<std::string>& log_lines, const std
         logai::FileDataLoaderConfig config;
         logai::FileDataLoader loader("", config);
         
-        // Convert to unordered_map for C++ function
-        std::unordered_map<std::string, std::string> patterns_map(patterns.begin(), patterns.end());
+        // Convert to F14FastMap for C++ function
+        folly::F14FastMap<std::string, std::string> patterns_map(patterns.begin(), patterns.end());
         
         // Extract attributes
         auto result = loader.extract_attributes(log_lines, patterns_map);

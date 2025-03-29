@@ -3,7 +3,7 @@
 #include <string>
 #include <cstdlib>
 #include <fstream>
-#include <unordered_map>
+#include <folly/container/F14Map.h>
 #include <spdlog/spdlog.h>
 
 namespace logai {
@@ -98,7 +98,7 @@ public:
     }
     
 private:
-    static inline std::unordered_map<std::string, std::string> env_vars_;
+    static inline folly::F14FastMap<std::string, std::string> env_vars_;
 };
 
 } // namespace logai 

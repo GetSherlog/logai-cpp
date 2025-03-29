@@ -5,11 +5,12 @@
 #include <sstream>
 #include <chrono>
 #include <iomanip>
+#include <folly/container/F14Map.h>
 
 namespace logai {
 
 PreprocessorConfig::PreprocessorConfig(
-    std::unordered_map<std::string, std::string> custom_delimiters_regex,
+    folly::F14FastMap<std::string, std::string> custom_delimiters_regex,
     std::vector<std::tuple<std::string, std::string>> custom_replace_list,
     bool use_simd
 ) : custom_delimiters_regex(std::move(custom_delimiters_regex)),
@@ -48,14 +49,14 @@ void Preprocessor::initialize_patterns() {
     }
 }
 
-std::tuple<std::string, std::unordered_map<std::string, std::vector<std::string>>> 
+std::tuple<std::string, folly::F14FastMap<std::string, std::vector<std::string>>> 
 Preprocessor::clean_log_line(std::string_view logline) {
     if (config_.use_simd) {
         return clean_log_line_simd(logline);
     }
 
     std::string cleaned_log(logline);
-    std::unordered_map<std::string, std::vector<std::string>> terms;
+    folly::F14FastMap<std::string, std::vector<std::string>> terms;
 
     // Apply delimiter regex replacements
     for (const auto& regex : delimiter_regexes_) {
@@ -109,13 +110,13 @@ std::vector<char> Preprocessor::prepare_delimiter_char_set() const {
     return delimiters;
 }
 
-std::tuple<std::string, std::unordered_map<std::string, std::vector<std::string>>> 
+std::tuple<std::string, folly::F14FastMap<std::string, std::vector<std::string>>> 
 Preprocessor::clean_log_line_simd(std::string_view logline) {
     if (logline.empty()) {
         return {std::string(), {}};
     }
     
-    std::unordered_map<std::string, std::vector<std::string>> terms;
+    folly::F14FastMap<std::string, std::vector<std::string>> terms;
     
     // First, apply SIMD-optimized delimiter replacements
     std::vector<char> delimiters = prepare_delimiter_char_set();
@@ -164,7 +165,7 @@ Preprocessor::clean_log_line_simd(std::string_view logline) {
     return {cleaned_log, terms};
 }
 
-std::tuple<std::vector<std::string>, std::unordered_map<std::string, std::vector<std::vector<std::string>>>>
+std::tuple<std::vector<std::string>, folly::F14FastMap<std::string, std::vector<std::vector<std::string>>>>
 Preprocessor::clean_log_batch(const std::vector<std::string>& loglines) {
     if (config_.use_simd) {
         return clean_log_batch_simd(loglines);
@@ -172,7 +173,7 @@ Preprocessor::clean_log_batch(const std::vector<std::string>& loglines) {
 
     const size_t num_lines = loglines.size();
     std::vector<std::string> cleaned_logs(num_lines);
-    std::unordered_map<std::string, std::vector<std::vector<std::string>>> all_terms;
+    folly::F14FastMap<std::string, std::vector<std::vector<std::string>>> all_terms;
     
     // Initialize term vectors for each replacement pattern
     for (const auto& [_, replacement] : replacement_regexes_) {
@@ -221,11 +222,11 @@ Preprocessor::clean_log_batch(const std::vector<std::string>& loglines) {
     return {cleaned_logs, all_terms};
 }
 
-std::tuple<std::vector<std::string>, std::unordered_map<std::string, std::vector<std::vector<std::string>>>>
+std::tuple<std::vector<std::string>, folly::F14FastMap<std::string, std::vector<std::vector<std::string>>>>
 Preprocessor::clean_log_batch_simd(const std::vector<std::string>& loglines) {
     const size_t num_lines = loglines.size();
     std::vector<std::string> cleaned_logs(num_lines);
-    std::unordered_map<std::string, std::vector<std::vector<std::string>>> all_terms;
+    folly::F14FastMap<std::string, std::vector<std::vector<std::string>>> all_terms;
     
     // Initialize term vectors for each replacement pattern
     for (const auto& [_, replacement] : replacement_regexes_) {
@@ -328,67 +329,6 @@ Preprocessor::identify_timestamps(const LogRecordObject& logrecord) {
     }
     
     return std::nullopt;
-}
-
-bool Preprocessor::group_log_index(
-    duckdb::Connection& conn, 
-    const std::string& table_name,
-    const std::vector<std::string>& by,
-    const std::string& result_table) {
-    
-    if (by.empty()) {
-        return false;
-    }
-    
-    try {
-        // Verify table exists
-        auto check_result = conn.Query("SELECT 1 FROM " + table_name + " LIMIT 1");
-        if (check_result->HasError()) {
-            throw std::runtime_error("Table not found: " + table_name);
-        }
-        
-        // Get the columns in the table to verify all requested columns exist
-        auto columns_result = conn.Query("PRAGMA table_info('" + table_name + "')");
-        if (columns_result->HasError()) {
-            throw std::runtime_error("Failed to get table info for: " + table_name);
-        }
-        
-        std::vector<std::string> existing_columns;
-        for (size_t i = 0; i < columns_result->RowCount(); i++) {
-            existing_columns.push_back(columns_result->GetValue(1, i).ToString());
-        }
-        
-        // Verify all requested columns exist
-        for (const auto& col_name : by) {
-            if (std::find(existing_columns.begin(), existing_columns.end(), col_name) == existing_columns.end()) {
-                throw std::runtime_error("Column not found: " + col_name);
-            }
-        }
-        
-        // Create the group by SQL query
-        std::string columns = "";
-        for (size_t i = 0; i < by.size(); i++) {
-            if (i > 0) columns += ", ";
-            columns += by[i];
-        }
-        
-        // Create SQL to select distinct values with group indices
-        std::string sql = "CREATE TABLE " + result_table + " AS "
-                          "SELECT " + columns + ", ROW_NUMBER() OVER (ORDER BY " + columns + ") - 1 AS group_index "
-                          "FROM " + table_name + " "
-                          "GROUP BY " + columns;
-        
-        // Execute the query
-        auto result = conn.Query(sql);
-        if (result->HasError()) {
-            throw std::runtime_error("Failed to create grouped table: " + result->GetError());
-        }
-        
-        return true;
-    } catch (const std::exception& e) {
-        // Log the error and return false
-        return false;
-    }
 }
 
 } // namespace logai 
