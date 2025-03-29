@@ -22,6 +22,17 @@ MemoryMappedFile::MemoryMappedFile()
 #endif
 }
 
+MemoryMappedFile::MemoryMappedFile(const std::string& path)
+    : mapped_data_(nullptr), file_size_(0), is_open_(false) {
+#ifdef _WIN32
+    file_handle_ = INVALID_HANDLE_VALUE;
+    mapping_handle_ = nullptr;
+#else
+    file_descriptor_ = -1;
+#endif
+    open(path);
+}
+
 MemoryMappedFile::~MemoryMappedFile() {
     close();
 }

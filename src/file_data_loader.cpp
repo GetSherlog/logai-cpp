@@ -701,489 +701,49 @@ std::vector<LogRecordObject> FileDataLoader::read_json(const std::string& filepa
     return read_logs(filepath);
 }
 
-// DuckDB-based methods
+// DuckDB integration has been removed from this implementation
+// The following methods have been removed:
+// - log_to_duckdb_table
+// - filter_duckdb_table
+// - export_to_csv
+// - extract_attributes (DuckDB version)
+// - process_large_file (DuckDB version)
+// - create_table_from_records
 
-bool FileDataLoader::log_to_duckdb_table(const std::string& filepath, 
-                                       const std::string& format, 
-                                       duckdb::Connection& conn, 
-                                       const std::string& table_name) {
+std::unordered_map<std::string, std::vector<std::string>> FileDataLoader::extract_attributes(
+    const std::vector<std::string>& log_lines,
+    const std::unordered_map<std::string, std::string>& patterns) {
+    
+    std::unordered_map<std::string, std::vector<std::string>> result;
+    
     try {
-        // Set format for parser
-        setFormat(format);
-        
-        // Load the log data
-        std::vector<LogRecordObject> records = read_logs(filepath);
-        
-        // Create table from the records
-        return create_table_from_records(records, conn, table_name);
-    }
-    catch (const std::exception& e) {
-        spdlog::error("Failed to load logs to DuckDB table: {}", e.what());
-        return false;
-    }
-}
-
-bool FileDataLoader::filter_duckdb_table(duckdb::Connection& conn, 
-                                      const std::string& input_table, 
-                                      const std::string& output_table,
-                                      const std::vector<std::string>& dimensions) {
-    try {
-        // Build column list
-        std::string columns;
-        if (dimensions.empty()) {
-            columns = "*";
-        } else {
-            for (size_t i = 0; i < dimensions.size(); ++i) {
-                if (i > 0) columns += ", ";
-                columns += dimensions[i];
-            }
-        }
-        
-        // Create new table with selected dimensions
-        std::string sql = "CREATE TABLE " + output_table + " AS SELECT " + 
-                          columns + " FROM " + input_table;
-        
-        // Execute the query
-        auto result = conn.Query(sql);
-        
-        return !result->HasError();
-    }
-    catch (const std::exception& e) {
-        spdlog::error("Failed to filter DuckDB table: {}", e.what());
-        return false;
-    }
-}
-
-bool FileDataLoader::filter_duckdb_table(duckdb::Connection& conn, 
-                                      const std::string& input_table, 
-                                      const std::string& output_table,
-                                      const std::string& column, 
-                                      const std::string& op, 
-                                      const std::string& value) {
-    try {
-        // Validate operator
-        std::string operator_str;
-        if (op == "eq" || op == "==") operator_str = "=";
-        else if (op == "neq" || op == "!=") operator_str = "!=";
-        else if (op == "gt" || op == ">") operator_str = ">";
-        else if (op == "lt" || op == "<") operator_str = "<";
-        else if (op == "gte" || op == ">=") operator_str = ">=";
-        else if (op == "lte" || op == "<=") operator_str = "<=";
-        else if (op == "like") operator_str = "LIKE";
-        else if (op == "contains") operator_str = "LIKE";
-        else {
-            spdlog::error("Unsupported operator: {}", op);
-            return false;
-        }
-        
-        // Adjust value for LIKE operator
-        std::string adjusted_value = value;
-        if (op == "contains") {
-            adjusted_value = "'%" + value + "%'";
-        } else if (value.front() != '\'' && value.back() != '\'') {
-            // Add quotes for string values if not already quoted
-            adjusted_value = "'" + value + "'";
-        }
-        
-        // Create new table with filtered data
-        std::string sql = "CREATE TABLE " + output_table + " AS SELECT * FROM " + 
-                          input_table + " WHERE " + column + " " + operator_str + " " + adjusted_value;
-        
-        // Execute the query
-        auto result = conn.Query(sql);
-        
-        return !result->HasError();
-    }
-    catch (const std::exception& e) {
-        spdlog::error("Failed to filter DuckDB table with condition: {}", e.what());
-        return false;
-    }
-}
-
-bool FileDataLoader::export_to_csv(duckdb::Connection& conn, 
-                                const std::string& table_name, 
-                                const std::string& output_path) {
-    try {
-        // Use DuckDB's COPY statement to export table to CSV
-        std::string sql = "COPY " + table_name + " TO '" + output_path + "' (HEADER, DELIMITER ',')";
-        
-        // Execute the query
-        auto result = conn.Query(sql);
-        
-        return !result->HasError();
-    }
-    catch (const std::exception& e) {
-        spdlog::error("Failed to export DuckDB table to CSV: {}", e.what());
-        return false;
-    }
-}
-
-bool FileDataLoader::extract_attributes(const std::vector<std::string>& log_lines,
-                                     const std::unordered_map<std::string, std::string>& patterns,
-                                     duckdb::Connection& conn,
-                                     const std::string& table_name) {
-    try {
-        // First, create the table with appropriate columns
-        std::string create_sql = "CREATE TABLE " + table_name + " (";
-        create_sql += "line_number INTEGER, original_line TEXT";
-        
-        // Add pattern columns
+        // Initialize result map with empty vectors for all pattern keys
         for (const auto& [name, _] : patterns) {
-            create_sql += ", " + name + " TEXT";
+            result[name] = std::vector<std::string>();
+            result[name].reserve(log_lines.size());
         }
         
-        create_sql += ")";
-        
-        auto create_result = conn.Query(create_sql);
-        if (create_result->HasError()) {
-            spdlog::error("Failed to create table for attribute extraction: {}", create_result->GetError());
-            return false;
-        }
-        
-        // Now process each log line and extract attributes using regex
-        std::string insert_base = "INSERT INTO " + table_name + " VALUES ";
-        
-        // Process in batches for better performance
-        const size_t BATCH_SIZE = 1000;
-        folly::fbvector<folly::fbstring> batch_inserts;
-        
-        for (size_t i = 0; i < log_lines.size(); ++i) {
-            const auto& line = log_lines[i];
-            std::string insert_values = "(" + std::to_string(i) + ", '" + 
-                                       duckdb::StringUtil::Replace(line, "'", "''") + "'";
-            
-            // Extract attributes using regex
+        // Extract attributes using regex for each line
+        for (const auto& line : log_lines) {
             for (const auto& [name, pattern_str] : patterns) {
                 std::regex pattern(pattern_str);
                 std::smatch match;
                 
                 if (std::regex_search(line, match, pattern) && match.size() > 1) {
                     // Use the first capturing group
-                    std::string value = match[1].str();
-                    // Escape single quotes for SQL
-                    value = duckdb::StringUtil::Replace(value, "'", "''");
-                    insert_values += ", '" + value + "'";
+                    result[name].push_back(match[1].str());
                 } else {
                     // No match
-                    insert_values += ", NULL";
+                    result[name].push_back("");
                 }
-            }
-            
-            insert_values += ")";
-            batch_inserts.push_back(insert_values);
-            
-            // Execute in batches
-            if (batch_inserts.size() >= BATCH_SIZE || i == log_lines.size() - 1) {
-                std::string batch_sql = insert_base + folly::join(", ", batch_inserts);
-                
-                auto insert_result = conn.Query(batch_sql);
-                if (insert_result->HasError()) {
-                    spdlog::error("Failed to insert extracted attributes: {}", insert_result->GetError());
-                    return false;
-                }
-                
-                batch_inserts.clear();
             }
         }
         
-        return true;
+        return result;
     }
     catch (const std::exception& e) {
         spdlog::error("Failed to extract attributes: {}", e.what());
-        return false;
-    }
-}
-
-bool FileDataLoader::process_large_file(const std::string& input_file,
-                                     const std::string& parser_type,
-                                     duckdb::Connection& conn,
-                                     const std::string& table_name,
-                                     size_t memory_limit_mb,
-                                     size_t chunk_size,
-                                     bool force_chunking) {
-    try {
-        spdlog::info("Processing large file: {}", input_file);
-        
-        // Check if file exists
-        if (!std::filesystem::exists(input_file)) {
-            spdlog::error("Input file not found: {}", input_file);
-            return false;
-        }
-        
-        // Check file size to determine processing strategy
-        size_t file_size_mb = std::filesystem::file_size(input_file) / (1024 * 1024);
-        spdlog::info("File size: {} MB, Memory limit: {} MB", file_size_mb, memory_limit_mb);
-        
-        if (file_size_mb < memory_limit_mb && !force_chunking) {
-            // File is small enough to process in one go
-            spdlog::info("Processing file in single pass");
-            
-            // Set up data loader with appropriate parser
-            setFormat(parser_type);
-            
-            // Load the log data
-            std::vector<LogRecordObject> records = read_logs(input_file);
-            
-            // Create table from the records
-            return create_table_from_records(records, conn, table_name);
-        } else {
-            // Process file in chunks
-            spdlog::info("Processing file in chunks (size: {})", chunk_size);
-            
-            // Create a temporary table name
-            std::string temp_table = table_name + "_temp";
-            
-            // Create a vector to store batch tables
-            std::vector<std::string> batch_tables;
-            
-            // Process the file in chunks
-            std::ifstream input(input_file);
-            if (!input) {
-                spdlog::error("Failed to open input file: {}", input_file);
-                return false;
-            }
-            
-            size_t line_count = 0;
-            size_t batch_id = 0;
-            std::vector<std::string> lines;
-            std::string line;
-            
-            // Skip header if needed (based on format)
-            bool has_header = parser_type == "csv" || parser_type == "tsv";
-            if (has_header) {
-                std::getline(input, line);
-            }
-            
-            // Read file in chunks
-            while (std::getline(input, line)) {
-                lines.push_back(line);
-                line_count++;
-                
-                if (line_count % chunk_size == 0) {
-                    // Process this batch
-                    std::string batch_table = temp_table + "_" + std::to_string(batch_id);
-                    batch_id++;
-                    
-                    // Parse the lines
-                    setFormat(parser_type);
-                    std::vector<LogRecordObject> batch_records;
-                    
-                    for (const auto& line : lines) {
-                        try {
-                            if (parser_->validate(line)) {
-                                LogParser::LogEntry entry = parser_->parse(line);
-                                batch_records.push_back(entry.to_record_object());
-                            }
-                        } catch (const std::exception& ex) {
-                            spdlog::warn("Failed to parse line: {}", ex.what());
-                        }
-                    }
-                    
-                    // Create table for this batch
-                    if (!create_table_from_records(batch_records, conn, batch_table)) {
-                        spdlog::error("Failed to create batch table: {}", batch_table);
-                        return false;
-                    }
-                    
-                    batch_tables.push_back(batch_table);
-                    lines.clear();
-                    
-                    spdlog::info("Processed {} lines, created batch table {}", 
-                                line_count, batch_table);
-                }
-            }
-            
-            // Process remaining lines
-            if (!lines.empty()) {
-                std::string batch_table = temp_table + "_" + std::to_string(batch_id);
-                
-                // Parse the lines
-                setFormat(parser_type);
-                std::vector<LogRecordObject> batch_records;
-                
-                for (const auto& line : lines) {
-                    try {
-                        if (parser_->validate(line)) {
-                            LogParser::LogEntry entry = parser_->parse(line);
-                            batch_records.push_back(entry.to_record_object());
-                        }
-                    } catch (const std::exception& ex) {
-                        spdlog::warn("Failed to parse line: {}", ex.what());
-                    }
-                }
-                
-                // Create table for this batch
-                if (!create_table_from_records(batch_records, conn, batch_table)) {
-                    spdlog::error("Failed to create batch table: {}", batch_table);
-                    return false;
-                }
-                
-                batch_tables.push_back(batch_table);
-                spdlog::info("Processed remaining {} lines, created batch table {}", 
-                            lines.size(), batch_table);
-            }
-            
-            // Now merge all batch tables
-            if (batch_tables.empty()) {
-                spdlog::error("No batch tables were created");
-                return false;
-            }
-            
-            // Create the final table by UNION ALL
-            std::string create_union_sql = "CREATE TABLE " + table_name + " AS ";
-            for (size_t i = 0; i < batch_tables.size(); ++i) {
-                if (i > 0) create_union_sql += " UNION ALL ";
-                create_union_sql += "SELECT * FROM " + batch_tables[i];
-            }
-            
-            auto union_result = conn.Query(create_union_sql);
-            if (union_result->HasError()) {
-                spdlog::error("Failed to create union table: {}", union_result->GetError());
-                return false;
-            }
-            
-            // Drop temporary tables
-            for (const auto& batch_table : batch_tables) {
-                conn.Query("DROP TABLE " + batch_table);
-            }
-            
-            spdlog::info("Successfully processed file in {} chunks", batch_tables.size());
-            return true;
-        }
-    }
-    catch (const std::exception& e) {
-        spdlog::error("Failed to process large file: {}", e.what());
-        return false;
-    }
-}
-
-bool FileDataLoader::create_table_from_records(const std::vector<LogRecordObject>& records,
-                                            duckdb::Connection& conn,
-                                            const std::string& table_name) {
-    try {
-        if (records.empty()) {
-            spdlog::warn("No records to create table from");
-            return false;
-        }
-        
-        // First, determine the schema from the first record
-        std::string create_sql = "CREATE TABLE " + table_name + " (";
-        
-        // Always include common fields
-        create_sql += "id INTEGER";
-        
-        // Add fields from the first record
-        const auto& first_record = records[0];
-        
-        // Handle timestamp field specially
-        if (first_record.has_field("timestamp")) {
-            create_sql += ", timestamp TEXT";
-        }
-        
-        // Handle other common fields
-        if (first_record.has_field("level")) {
-            create_sql += ", level TEXT";
-        }
-        
-        if (first_record.has_field("message")) {
-            create_sql += ", message TEXT";
-        }
-        
-        // Add all other fields from the record
-        for (const auto& [key, value] : first_record.fields) {
-            // Skip fields we've already added
-            if (key == "timestamp" || key == "level" || key == "message") {
-                continue;
-            }
-            
-            // Determine type - for simplicity, use TEXT for everything
-            create_sql += ", " + key.toStdString() + " TEXT";
-        }
-        
-        create_sql += ")";
-        
-        // Create the table
-        auto create_result = conn.Query(create_sql);
-        if (create_result->HasError()) {
-            spdlog::error("Failed to create table: {}", create_result->GetError());
-            return false;
-        }
-        
-        // Now insert the records
-        std::string insert_base = "INSERT INTO " + table_name + " VALUES ";
-        
-        // Process in batches for better performance
-        const size_t BATCH_SIZE = 1000;
-        folly::fbvector<folly::fbstring> batch_inserts;
-        
-        for (size_t i = 0; i < records.size(); ++i) {
-            const auto& record = records[i];
-            
-            std::string insert_values = "(" + std::to_string(i);
-            
-            // Add timestamp field if present
-            if (first_record.has_field("timestamp")) {
-                if (record.has_field("timestamp")) {
-                    insert_values += ", '" + duckdb::StringUtil::Replace(record.get_field("timestamp"), "'", "''") + "'";
-                } else {
-                    insert_values += ", NULL";
-                }
-            }
-            
-            // Add level field if present
-            if (first_record.has_field("level")) {
-                if (record.has_field("level")) {
-                    insert_values += ", '" + duckdb::StringUtil::Replace(record.get_field("level"), "'", "''") + "'";
-                } else {
-                    insert_values += ", NULL";
-                }
-            }
-            
-            // Add message field if present
-            if (first_record.has_field("message")) {
-                if (record.has_field("message")) {
-                    insert_values += ", '" + duckdb::StringUtil::Replace(record.get_field("message"), "'", "''") + "'";
-                } else {
-                    insert_values += ", NULL";
-                }
-            }
-            
-            // Add all other fields
-            for (const auto& [key, _] : first_record.fields) {
-                // Skip fields we've already added
-                if (key == "timestamp" || key == "level" || key == "message") {
-                    continue;
-                }
-                
-                if (record.has_field(key.toStdString())) {
-                    insert_values += ", '" + duckdb::StringUtil::Replace(record.get_field(key.toStdString()), "'", "''") + "'";
-                } else {
-                    insert_values += ", NULL";
-                }
-            }
-            
-            insert_values += ")";
-            batch_inserts.push_back(insert_values);
-            
-            // Execute in batches
-            if (batch_inserts.size() >= BATCH_SIZE || i == records.size() - 1) {
-                std::string batch_sql = insert_base + folly::join(", ", batch_inserts);
-                
-                auto insert_result = conn.Query(batch_sql);
-                if (insert_result->HasError()) {
-                    spdlog::error("Failed to insert records: {}", insert_result->GetError());
-                    return false;
-                }
-                
-                batch_inserts.clear();
-            }
-        }
-        
-        return true;
-    }
-    catch (const std::exception& e) {
-        spdlog::error("Failed to create table from records: {}", e.what());
-        return false;
+        return result;
     }
 }
 
@@ -1279,7 +839,7 @@ bool FileDataLoader::process_large_file_with_callback(
         
         // For large files, process in chunks
         MemoryMappedFile mmapped_file(input_file);
-        if (!mmapped_file.is_open()) {
+        if (!mmapped_file.isOpen()) {
             spdlog::error("Failed to memory map file: {}", input_file);
             return false;
         }
@@ -1361,43 +921,6 @@ bool FileDataLoader::process_large_file_with_callback(
     catch (const std::exception& e) {
         spdlog::error("Failed to process large file: {}", e.what());
         return false;
-    }
-}
-
-std::unordered_map<std::string, std::vector<std::string>> FileDataLoader::extract_attributes(
-    const std::vector<std::string>& log_lines,
-    const std::unordered_map<std::string, std::string>& patterns) {
-    
-    std::unordered_map<std::string, std::vector<std::string>> result;
-    
-    try {
-        // Initialize result map with empty vectors for all pattern keys
-        for (const auto& [name, _] : patterns) {
-            result[name] = std::vector<std::string>();
-            result[name].reserve(log_lines.size());
-        }
-        
-        // Extract attributes using regex for each line
-        for (const auto& line : log_lines) {
-            for (const auto& [name, pattern_str] : patterns) {
-                std::regex pattern(pattern_str);
-                std::smatch match;
-                
-                if (std::regex_search(line, match, pattern) && match.size() > 1) {
-                    // Use the first capturing group
-                    result[name].push_back(match[1].str());
-                } else {
-                    // No match
-                    result[name].push_back("");
-                }
-            }
-        }
-        
-        return result;
-    }
-    catch (const std::exception& e) {
-        spdlog::error("Failed to extract attributes: {}", e.what());
-        return result;
     }
 }
 

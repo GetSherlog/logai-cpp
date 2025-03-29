@@ -13,6 +13,7 @@ namespace logai {
 class MemoryMappedFile {
 public:
     MemoryMappedFile();
+    explicit MemoryMappedFile(const std::string& path);
     ~MemoryMappedFile();
     
     bool open(const std::string& path);
